@@ -4,6 +4,9 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -18,7 +21,9 @@ import kotlin.random.Random
 
 /**
  * A miniature of the overlay, used on the app's home screen so the ghost can be tried out before
- * (and after) it is set loose over everything else. Same rules: poke it, it bolts.
+ * (and after) it is set loose over everything else. A quick tap still spooks him; holding still on
+ * him instead pets him. [startFetch] runs a little fetch game here when Play is tapped from the
+ * settings screen — a toy appears, he chases it, and catches it.
  */
 class GhostPlayground @JvmOverloads constructor(
     context: Context,
@@ -48,6 +53,30 @@ class GhostPlayground @JvmOverloads constructor(
 
     private var running = false
 
+    // Petting: a hold that starts and stays on him, as opposed to a quick poke or a drag past him.
+    private val petHandler = Handler(Looper.getMainLooper())
+    private var pettingArmed = false
+    private var petTriggered = false
+    private var downOnHim = false
+    private var lastPetAt = 0L
+    private val petRunnable = Runnable {
+        if (!pettingArmed) return@Runnable
+        petTriggered = true
+        pet()
+    }
+
+    // Fetch: a toy to chase, started from the Play button.
+    private var fetching = false
+    private var toyX = 0f
+    private var toyY = 0f
+    private var fetchEndsAt = 0f
+    private val toyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFD166") }
+    private val toyRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        color = Color.parseColor("#66C9A227")
+    }
+
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             // `isAttachedToWindow` stays true once the app is in the background, so on its own it
@@ -67,7 +96,26 @@ class GhostPlayground @JvmOverloads constructor(
 
     init {
         setWillNotDraw(false)
+        ghost.species = Prefs.species(context)
         addView(ghost, LayoutParams(size, size))
+    }
+
+    /** Called by the settings screen when the character picker changes. */
+    fun setSpecies(species: Species) {
+        ghost.species = species
+        ghost.invalidate()
+    }
+
+    /** Drops a toy in for him to chase — called when Play succeeds. Purely a visual flourish; the
+     *  actual stat effects are already applied by the time this runs. */
+    fun startFetch() {
+        if (!placed || width <= 0 || height <= 0) return
+        val margin = size * 0.6f
+        toyX = margin + Random.nextFloat() * (width - margin * 2f).coerceAtLeast(1f)
+        toyY = margin + Random.nextFloat() * (height - margin * 2f).coerceAtLeast(1f)
+        fetching = true
+        fetchEndsAt = clock + FETCH_TIMEOUT_SECONDS
+        ghost.notice()
     }
 
     override fun onAttachedToWindow() {
@@ -77,6 +125,7 @@ class GhostPlayground @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         pause()
+        petHandler.removeCallbacks(petRunnable)
         super.onDetachedFromWindow()
     }
 
@@ -112,7 +161,15 @@ class GhostPlayground @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lookAt(event.x, event.y)
-                fleeFrom(event.x, event.y)
+                downOnHim = isOnGhost(event.x, event.y)
+                petTriggered = false
+                if (downOnHim) {
+                    pettingArmed = true
+                    petHandler.postDelayed(petRunnable, PET_HOLD_MS)
+                } else {
+                    pettingArmed = false
+                    fleeFrom(event.x, event.y)
+                }
                 performClick()
                 return true
             }
@@ -120,10 +177,40 @@ class GhostPlayground @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 lookAt(event.x, event.y)
                 nextGlanceAt = clock + 1.5f
+                if (pettingArmed && !isOnGhost(event.x, event.y)) {
+                    pettingArmed = false
+                    petHandler.removeCallbacks(petRunnable)
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                petHandler.removeCallbacks(petRunnable)
+                // Landed on him but let go before the hold fired: that's a poke, not a pet.
+                if (downOnHim && !petTriggered) fleeFrom(event.x, event.y)
+                pettingArmed = false
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun isOnGhost(x: Float, y: Float): Boolean {
+        val cx = posX + size / 2f
+        val cy = posY + size / 2f
+        return hypot(x - cx, y - cy) <= size * 0.65f
+    }
+
+    /** A gentle affection tick, cooldown-limited so holding still doesn't rocket happiness up. */
+    private fun pet() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastPetAt < PET_COOLDOWN_MS) return
+        lastPetAt = now
+        val s = PetStats.snapshot(context)
+        val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
+        Prefs.saveStats(context, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
+        ghost.notice()
+        // Still held: keep ticking affection for as long as the finger stays put.
+        petHandler.postDelayed(petRunnable, PET_COOLDOWN_MS)
     }
 
     private fun lookAt(x: Float, y: Float) {
@@ -139,7 +226,12 @@ class GhostPlayground @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawText("drag a finger around — he watches", width / 2f, height - 18f * density, hintPaint)
+        if (fetching) {
+            val r = size * 0.16f
+            canvas.drawCircle(toyX, toyY, r, toyPaint)
+            canvas.drawCircle(toyX, toyY, r, toyRimPaint)
+        }
+        canvas.drawText("tap to spook him, hold to pet him", width / 2f, height - 18f * density, hintPaint)
     }
 
     private fun fleeFrom(fromX: Float, fromY: Float) {
@@ -161,6 +253,11 @@ class GhostPlayground @JvmOverloads constructor(
 
     private fun tick(dt: Float) {
         if (!placed) return
+
+        if (fetching) {
+            tickFetch(dt)
+            return
+        }
 
         // Same rule as the overlay: always drifting, never parked.
         driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * dt
@@ -190,6 +287,42 @@ class GhostPlayground @JvmOverloads constructor(
         apply()
     }
 
+    /** He beelines for the toy instead of idle-wandering, until he reaches it or time runs out. */
+    private fun tickFetch(dt: Float) {
+        val cx = posX + size / 2f
+        val cy = posY + size / 2f
+        val dx = toyX - cx
+        val dy = toyY - cy
+        val dist = hypot(dx, dy)
+        val caught = dist < size * 0.55f
+
+        if (caught || clock > fetchEndsAt) {
+            fetching = false
+            if (caught) ghost.spook() // a happy little bounce for the catch
+            ghost.advance(dt)
+            ghost.invalidate()
+            return
+        }
+
+        val eagerSpeed = driftSpeed * 6f
+        val settle = 1f - exp(-2.2f * dt)
+        velX += (dx / dist * eagerSpeed - velX) * settle
+        velY += (dy / dist * eagerSpeed - velY) * settle
+        posX += velX * dt
+        posY += velY * dt
+
+        val maxX = (width - size).toFloat()
+        val maxY = (height - size).toFloat()
+        posX = posX.coerceIn(0f, maxX)
+        posY = posY.coerceIn(0f, maxY)
+
+        ghost.setMotion(velX, velY)
+        ghost.lookAt(dx / dist, dy / dist)
+        ghost.advance(dt)
+        ghost.invalidate()
+        apply()
+    }
+
     private fun bounceX() {
         velX = -velX * 0.5f
         driftAngle = PI.toFloat() - driftAngle
@@ -205,5 +338,11 @@ class GhostPlayground @JvmOverloads constructor(
     private fun apply() {
         ghost.translationX = posX
         ghost.translationY = posY
+    }
+
+    private companion object {
+        const val PET_HOLD_MS = 420L
+        const val PET_COOLDOWN_MS = 1_800L
+        const val FETCH_TIMEOUT_SECONDS = 6f
     }
 }

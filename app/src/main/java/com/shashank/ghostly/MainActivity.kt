@@ -2,9 +2,15 @@ package com.shashank.ghostly
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -16,12 +22,17 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.content.res.ColorStateList
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * The one and only screen: try the ghost out, then let it loose on top of every other app.
@@ -33,13 +44,27 @@ class MainActivity : Activity() {
     private lateinit var blockedCard: LinearLayout
     private lateinit var modeSwitch: Switch
     private lateinit var footerLabel: TextView
+    private lateinit var playground: GhostPlayground
+    private lateinit var hungerBar: ProgressBar
+    private lateinit var energyBar: ProgressBar
+    private lateinit var happinessBar: ProgressBar
+    private lateinit var angerBar: ProgressBar
+    private lateinit var moodLabel: TextView
+    private lateinit var tokensLabel: TextView
+    private lateinit var nameLabel: TextView
+    private lateinit var streakLabel: TextView
+    private lateinit var restButton: Button
+    private lateinit var treatButton: Button
+    private lateinit var giftButton: Button
+    private lateinit var playButton: Button
     private val sizeButtons = mutableListOf<Pair<Int, Button>>()
+    private val speciesButtons = mutableListOf<Pair<Species, Button>>()
 
     private var lastKnownRunning: Boolean? = null
 
     private val stateWatcher = object : Runnable {
         override fun run() {
-            if (lastKnownRunning != GhostOverlayService.isRunning) refreshState()
+            if (lastKnownRunning != GhostOverlayService.isRunning) refreshState() else refreshNeeds()
             primaryButton.postDelayed(this, WATCH_INTERVAL_MS)
         }
     }
@@ -60,12 +85,23 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+
+        val previousOpen = Prefs.lastOpenedAt(this)
+        val now = System.currentTimeMillis()
+        Prefs.saveLastOpenedAt(this, now)
+        Streak.touch(this)
+        if (previousOpen != 0L && now - previousOpen > WELCOME_BACK_GAP_MS) {
+            Toast.makeText(this, "${petName()} missed you!", Toast.LENGTH_LONG).show()
+        }
+
         refreshState()
         // The overlay can come and go without this screen being told — stopped from its
         // notification, or restarted by the system — so keep the button honest while we're visible.
         primaryButton.removeCallbacks(stateWatcher)
         primaryButton.postDelayed(stateWatcher, WATCH_INTERVAL_MS)
     }
+
+    private fun petName(): String = Prefs.name(this) ?: Prefs.species(this).label
 
     override fun onPause() {
         primaryButton.removeCallbacks(stateWatcher)
@@ -118,12 +154,139 @@ class MainActivity : Activity() {
                 .apply { topMargin = dp(8) }
         })
 
+        val identityRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(16) }
+        }
+        nameLabel = TextView(this).apply {
+            setTextColor(mint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            setOnClickListener { showRenameDialog() }
+        }
+        identityRow.addView(nameLabel)
+        streakLabel = TextView(this).apply {
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        }
+        identityRow.addView(streakLabel)
+        column.addView(identityRow)
+
         // Playground
-        column.addView(GhostPlayground(this).apply {
+        playground = GhostPlayground(this).apply {
             background = rounded(card, dp(24).toFloat(), Color.parseColor("#2B2650"))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(300))
                 .apply { topMargin = dp(22) }
+        }
+        column.addView(playground)
+
+        // Needs
+        column.addView(sectionLabel("Needs"))
+        moodLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(8) }
+        }
+        column.addView(moodLabel)
+        val needsCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(card, dp(18).toFloat(), Color.parseColor("#2B2650"))
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(10) }
+        }
+        hungerBar = addNeedRow(needsCard, "Hunger")
+        energyBar = addNeedRow(needsCard, "Energy")
+        happinessBar = addNeedRow(needsCard, "Happiness")
+        angerBar = addNeedRow(needsCard, "Anger", tint = Color.parseColor("#FF5252"))
+        column.addView(needsCard)
+
+        val actionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(10) }
+        }
+        actionsRow.addView(actionButton("Feed") {
+            PetStats.feed(this@MainActivity)
+            refreshNeeds()
         })
+        playButton = actionButton("Play · ${Emotions.PLAY_COST}", leftMargin = true) {
+            when (Emotions.playWithToken(this@MainActivity)) {
+                Emotions.PlayOutcome.SUCCESS -> {
+                    refreshNeeds()
+                    playground.startFetch()
+                }
+                Emotions.PlayOutcome.NO_TOKENS ->
+                    Toast.makeText(this@MainActivity, "Out of tokens for today — more tomorrow", Toast.LENGTH_SHORT).show()
+                Emotions.PlayOutcome.TOO_TIRED ->
+                    Toast.makeText(this@MainActivity, "Too worn out to play right now", Toast.LENGTH_SHORT).show()
+            }
+        }
+        actionsRow.addView(playButton)
+        restButton = actionButton("Let him nap", leftMargin = true) {
+            val sleepingNow = PetStats.snapshot(this@MainActivity).sleeping
+            PetStats.setSleeping(this@MainActivity, !sleepingNow)
+            refreshNeeds()
+        }
+        actionsRow.addView(restButton)
+        column.addView(actionsRow)
+
+        tokensLabel = TextView(this).apply {
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(14) }
+        }
+        column.addView(tokensLabel)
+
+        val treatsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(8) }
+        }
+        treatButton = actionButton("Treat · ${Emotions.TREAT_COST}") {
+            if (Emotions.giveTreat(this@MainActivity)) {
+                refreshNeeds()
+            } else {
+                Toast.makeText(this@MainActivity, "Out of tokens for today — more tomorrow", Toast.LENGTH_SHORT).show()
+            }
+        }
+        treatsRow.addView(treatButton)
+        giftButton = actionButton("Gift · ${Emotions.GIFT_COST}", leftMargin = true) {
+            if (Emotions.giveGift(this@MainActivity)) {
+                refreshNeeds()
+            } else {
+                Toast.makeText(this@MainActivity, "Out of tokens for today — more tomorrow", Toast.LENGTH_SHORT).show()
+            }
+        }
+        treatsRow.addView(giftButton)
+        column.addView(treatsRow)
+
+        // Character
+        column.addView(sectionLabel("Character"))
+        val speciesRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(10) }
+        }
+        Species.entries.forEachIndexed { index, species ->
+            val button = Button(this).apply {
+                text = species.label
+                isAllCaps = false
+                stateListAnimator = null
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+                    if (index > 0) leftMargin = dp(10)
+                }
+                setOnClickListener { chooseSpecies(species) }
+            }
+            speciesButtons += species to button
+            speciesRow.addView(button)
+        }
+        column.addView(speciesRow)
 
         statusLabel = TextView(this).apply {
             setTextColor(dim)
@@ -148,6 +311,17 @@ class MainActivity : Activity() {
 
         blockedCard = buildBlockedCard()
         column.addView(blockedCard)
+
+        // Share
+        column.addView(sectionLabel("Share"))
+        val shareRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                .apply { topMargin = dp(10) }
+        }
+        shareRow.addView(actionButton("Share his card") { sharePetCard() })
+        shareRow.addView(actionButton("Add to home screen", leftMargin = true) { requestPinWidget() })
+        column.addView(shareRow)
 
         // Size picker
         column.addView(sectionLabel("Size"))
@@ -355,6 +529,42 @@ class MainActivity : Activity() {
         if (stroke != null) setStroke(dp(1), stroke)
     }
 
+    private fun addNeedRow(container: LinearLayout, label: String, tint: Int = mint): ProgressBar {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                if (container.childCount > 0) topMargin = dp(14)
+            }
+        }
+        row.addView(TextView(this).apply {
+            text = label
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        })
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = ColorStateList.valueOf(tint)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(10)).apply { topMargin = dp(6) }
+        }
+        row.addView(bar)
+        container.addView(row)
+        return bar
+    }
+
+    private fun actionButton(label: String, leftMargin: Boolean = false, onClick: () -> Unit) =
+        Button(this).apply {
+            text = label
+            isAllCaps = false
+            stateListAnimator = null
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            background = rounded(card, dp(14).toFloat(), Color.parseColor("#2B2650"))
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                if (leftMargin) this.leftMargin = dp(10)
+            }
+            setOnClickListener { onClick() }
+        }
+
     // endregion
 
     // region state
@@ -396,6 +606,160 @@ class MainActivity : Activity() {
             )
             button.setTextColor(if (selected) Color.WHITE else dim)
         }
+
+        val currentSpecies = Prefs.species(this)
+        speciesButtons.forEach { (species, button) ->
+            val selected = species == currentSpecies
+            button.background = rounded(
+                if (selected) accent else card,
+                dp(14).toFloat(),
+                if (selected) accent else Color.parseColor("#2B2650")
+            )
+            button.setTextColor(if (selected) Color.WHITE else dim)
+        }
+
+        refreshNeeds()
+    }
+
+    private fun refreshNeeds() {
+        val s = Emotions.snapshot(this)
+        hungerBar.progress = s.body.hunger.toInt()
+        energyBar.progress = s.body.energy.toInt()
+        happinessBar.progress = s.body.happiness.toInt()
+        angerBar.progress = s.anger.toInt()
+        restButton.text = if (s.body.sleeping) "Wake him up" else "Let him nap"
+
+        val name = petName()
+        moodLabel.text = when {
+            s.body.sleeping -> "$name is resting."
+            s.mood == Mood.ANGRY -> "$name is angry with you — a gift would help."
+            s.mood == Mood.SAD -> "$name is a little down."
+            else -> "$name is content."
+        }
+        nameLabel.text = Prefs.name(this)?.let { "$it · tap to rename" } ?: "Tap to name him"
+
+        val streak = Prefs.streak(this)
+        streakLabel.text = if (streak <= 1) "1 day streak" else "$streak day streak"
+
+        tokensLabel.text = "Tokens today: ${s.tokens}/${Emotions.DAILY_TOKENS} — free daily allowance"
+
+        playButton.isEnabled = s.tokens >= Emotions.PLAY_COST
+        playButton.alpha = if (playButton.isEnabled) 1f else 0.5f
+        treatButton.isEnabled = s.tokens >= Emotions.TREAT_COST
+        treatButton.alpha = if (treatButton.isEnabled) 1f else 0.5f
+        giftButton.isEnabled = s.tokens >= Emotions.GIFT_COST
+        giftButton.alpha = if (giftButton.isEnabled) 1f else 0.5f
+
+        runCatching { GhostlyWidgetProvider.refreshAll(this) }
+    }
+
+    /** Renders his current look and stats to a PNG in the private share cache, then hands it to
+     *  whatever app the user picks — via [ShareFileProvider], since the app carries no library
+     *  (AndroidX's FileProvider included) to do this for us. */
+    private fun sharePetCard() {
+        runCatching {
+            val fileName = "pet_card.png"
+            val file = File(ShareFileProvider.shareDir(this), fileName)
+            FileOutputStream(file).use { out ->
+                renderPetCard().compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            val uri = ShareFileProvider.uriFor(fileName)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share ${petName()}"))
+        }.onFailure {
+            Toast.makeText(this, "Couldn't create the share card", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun renderPetCard(): Bitmap {
+        val w = dp(360)
+        val h = dp(420)
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(ink)
+
+        val ghostSize = dp(180)
+        val view = GhostView(this)
+        view.species = Prefs.species(this)
+        val s = Emotions.snapshot(this)
+        view.setMood(s.mood, s.body.sleeping)
+        val spec = View.MeasureSpec.makeMeasureSpec(ghostSize, View.MeasureSpec.EXACTLY)
+        view.measure(spec, spec)
+        view.layout(0, 0, ghostSize, ghostSize)
+        canvas.save()
+        canvas.translate((w - ghostSize) / 2f, dp(36).toFloat())
+        view.draw(canvas)
+        canvas.restore()
+
+        val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = dp(22).toFloat()
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        canvas.drawText(petName(), w / 2f, dp(250).toFloat(), namePaint)
+
+        val statPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = dim
+            textSize = dp(14).toFloat()
+            textAlign = Paint.Align.CENTER
+        }
+        val statusText = when {
+            s.body.sleeping -> "Resting"
+            s.mood == Mood.ANGRY -> "Angry"
+            s.mood == Mood.SAD -> "A little down"
+            else -> "Content"
+        }
+        canvas.drawText("${Prefs.species(this).label} · $statusText", w / 2f, dp(278).toFloat(), statPaint)
+        canvas.drawText(
+            "Hunger ${s.body.hunger.toInt()} · Energy ${s.body.energy.toInt()} · Happiness ${s.body.happiness.toInt()}",
+            w / 2f, dp(304).toFloat(), statPaint
+        )
+        canvas.drawText("Ghostly", w / 2f, (h - dp(20)).toFloat(), statPaint)
+        return bitmap
+    }
+
+    private fun requestPinWidget() {
+        val manager = getSystemService(AppWidgetManager::class.java)
+        if (manager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !manager.isRequestPinAppWidgetSupported) {
+            Toast.makeText(
+                this,
+                "Your launcher doesn't support this — add him from your home screen's widget picker instead",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        manager.requestPinAppWidget(ComponentName(this, GhostlyWidgetProvider::class.java), null, null)
+    }
+
+    private fun showRenameDialog() {
+        val input = EditText(this).apply {
+            setText(Prefs.name(this@MainActivity) ?: "")
+            hint = Prefs.species(this@MainActivity).label
+            setTextColor(Color.WHITE)
+            setHintTextColor(dim)
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Name him")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                Prefs.setName(this, input.text.toString())
+                refreshNeeds()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun chooseSpecies(species: Species) {
+        Prefs.setSpecies(this, species)
+        playground.setSpecies(species)
+        restartOverlayIfRunning()
+        refreshState()
     }
 
     private fun onPrimaryClicked() {
@@ -451,6 +815,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val WATCH_INTERVAL_MS = 1_000L
+        const val WELCOME_BACK_GAP_MS = 12 * 60 * 60 * 1_000L
     }
 
     // endregion

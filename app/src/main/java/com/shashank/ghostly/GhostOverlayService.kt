@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -118,6 +119,17 @@ class GhostOverlayService : Service() {
     private var gazeScreenX = 0f
     private var gazeScreenY = 0f
     private var nextGlanceAt = 0f
+
+    // Mood, read from Emotions. Refreshed on a slow timer plus whenever a stat changes (feeding,
+    // playing, a manual nap, a treat or gift) so the two screens never drift far apart.
+    private var sleeping = false
+    private var mood: Mood = Mood.CONTENT
+    private var nextStatsTickAt = 0f
+    private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    // So the notification is only rebuilt when what it would say actually changes.
+    private var notifiedSleeping = false
+    private var notifiedMood: Mood = Mood.CONTENT
 
     // Drag bookkeeping
     private var dragging = false
@@ -230,6 +242,8 @@ class GhostOverlayService : Service() {
         stopLoop()
         handler.removeCallbacksAndMessages(null)
         if (root != null) runCatching { unregisterReceiver(screenReceiver) }
+        prefsListener?.let { runCatching { Prefs.raw(this).unregisterOnSharedPreferenceChangeListener(it) } }
+        prefsListener = null
         Watchdog.cancel(this)
         root?.let { view -> runCatching { windowManager.removeView(view) } }
         root = null
@@ -257,6 +271,7 @@ class GhostOverlayService : Service() {
         refreshBounds()
 
         val view = GhostView(this)
+        view.species = Prefs.species(this)
         ghost = view
         val container = FrameLayout(this).apply {
             addView(
@@ -306,6 +321,31 @@ class GhostOverlayService : Service() {
         )
         startLoop()
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
+
+        // Feeding, playing or napping from the app writes straight to Prefs; catch it here too, so
+        // he doesn't wait up to ten seconds to visibly react.
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> refreshMood() }
+        prefsListener = listener
+        Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
+        refreshMood()
+    }
+
+    /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
+     *  notification honest about how he's doing. */
+    private fun refreshMood() {
+        val s = Emotions.snapshot(this)
+        sleeping = s.body.sleeping
+        mood = s.mood
+        ghost?.setMood(mood, sleeping)
+
+        if (sleeping != notifiedSleeping || mood != notifiedMood) {
+            notifiedSleeping = sleeping
+            notifiedMood = mood
+            runCatching {
+                getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
+            }
+            runCatching { GhostlyWidgetProvider.refreshAll(this) }
+        }
     }
 
     private fun refreshBounds() {
@@ -376,6 +416,9 @@ class GhostOverlayService : Service() {
                 if (!dragging) {
                     if (held > 550) {
                         openApp()
+                    } else if (sleeping) {
+                        // Stirred, not startled: a poke while napping just wakes him.
+                        wakeUp()
                     } else {
                         // Poked on or near him: bolt away from the finger.
                         fleeFrom(event.rawX, event.rawY)
@@ -407,6 +450,15 @@ class GhostOverlayService : Service() {
 
     // region motion
 
+    /** A poke while napping: stir awake with a small startle rather than a full bolt. */
+    private fun wakeUp() {
+        PetStats.wake(this)
+        sleeping = false
+        ghost?.setMood(mood, false)
+        ghost?.notice()
+        ghost?.spookLightly()
+    }
+
     /** Dash off in a random direction, generally away from [fromX], [fromY]. */
     private fun fleeFrom(fromX: Float, fromY: Float) {
         val cx = posX + windowPx / 2f
@@ -426,8 +478,10 @@ class GhostOverlayService : Service() {
     }
 
     private fun launch(angle: Float) {
-        // Ghostly, not startled-cat: he glides away rather than snapping across the screen.
-        val speed = (320f + Random.nextFloat() * 260f) * density
+        // Ghostly, not startled-cat: he glides away rather than snapping across the screen. Angry,
+        // that glide gets a noticeably harder edge.
+        val angryBoost = if (mood == Mood.ANGRY) 1.5f else 1f
+        val speed = (320f + Random.nextFloat() * 260f) * density * angryBoost
         velX = cos(angle) * speed
         velY = sin(angle) * speed
         driftAngle = angle
@@ -442,6 +496,10 @@ class GhostOverlayService : Service() {
      * cooldown and a smaller flinch than one deliberate poke out of the blue.
      */
     private fun noticeTap() {
+        if (sleeping) {
+            wakeUp()
+            return
+        }
         val now = SystemClock.uptimeMillis()
         while (recentTaps.isNotEmpty() && now - recentTaps.first() > 4_000) recentTaps.removeFirst()
         recentTaps.addLast(now)
@@ -459,11 +517,13 @@ class GhostOverlayService : Service() {
         }
         nextGlanceAt = clock + 1.6f
 
+        // Angry, he's a good deal less patient with commotion — shorter fuse, bigger flinch.
+        val angry = mood == Mood.ANGRY
         val cooldown = when {
             burst >= 6 -> 2_600L   // busy screen: he settles down and mostly just watches
             burst >= 3 -> 1_100L
             else -> 320L
-        }
+        } / (if (angry) 2 else 1)
         val view = ghost ?: return
         if (now - lastReactionAt < cooldown) {
             view.notice()
@@ -474,7 +534,7 @@ class GhostOverlayService : Service() {
         // Drift away from the commotion. Direction is random — with a lean towards open screen, so
         // he does not spend his life pinned against an edge.
         val angle = angleTowardsOpenSpace()
-        val impulse = (if (burst >= 3) 90f else 190f + Random.nextFloat() * 120f) * density
+        val impulse = (if (burst >= 3) 90f else 190f + Random.nextFloat() * 120f) * density * (if (angry) 1.4f else 1f)
         velX += cos(angle) * impulse
         velY += sin(angle) * impulse
         driftAngle = angle
@@ -529,13 +589,35 @@ class GhostOverlayService : Service() {
     private fun tick(dt: Float) {
         val view = ghost ?: return
         if (dragging) return
+
+        if (clock > nextStatsTickAt) {
+            nextStatsTickAt = clock + 10f
+            refreshMood()
+        }
+
+        if (sleeping) {
+            // Settle to a stop and stay put rather than drifting off mid-nap.
+            val settle = 1f - exp(-2.5f * dt)
+            velX -= velX * settle
+            velY -= velY * settle
+            posX += velX * dt
+            posY += velY * dt
+            clampIntoBounds()
+            view.setMotion(velX, velY)
+            applyPosition()
+            return
+        }
+
         updateGaze(dt)
 
         // He is never quite still: the heading wanders, and the speed always settles back to a slow
-        // float rather than to zero.
-        driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * dt
-        val targetX = cos(driftAngle) * driftSpeed
-        val targetY = sin(driftAngle) * driftSpeed
+        // float rather than to zero. Angry, that float turns into a restless, erratic pace — he's
+        // not going anywhere, but he's clearly not settled either.
+        val angryJitter = if (mood == Mood.ANGRY) 2.6f else 1f
+        val angrySpeed = if (mood == Mood.ANGRY) 1.6f else 1f
+        driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
+        val targetX = cos(driftAngle) * driftSpeed * angrySpeed
+        val targetY = sin(driftAngle) * driftSpeed * angrySpeed
         val settle = 1f - exp(-0.85f * dt)
         velX += (targetX - velX) * settle
         velY += (targetY - velY) * settle
@@ -639,10 +721,18 @@ class GhostOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val name = Prefs.name(this) ?: Prefs.species(this).label
+        val (title, text) = when {
+            sleeping -> "$name is napping" to "He's resting. Wake him with a tap, or Stop to send him away."
+            mood == Mood.ANGRY -> "$name is upset with you" to "He's been neglected too long — a gift would help."
+            mood == Mood.SAD -> "$name is floating" to "He's a little down today."
+            else -> "$name is floating" to "Tap him and he runs away."
+        }
+
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_ghost)
-            .setContentTitle("Ghostly is floating")
-            .setContentText("Tap him and he runs away.")
+            .setContentTitle(title)
+            .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
