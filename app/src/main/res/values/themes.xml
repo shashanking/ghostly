@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Ghostly" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B0A14</item>
+        <item name="android:navigationBarColor">#0B0A14</item>
+        <item name="android:windowBackground">#0B0A14</item>
+    </style>
+</resources>

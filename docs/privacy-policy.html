@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghostly — Privacy Policy</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; padding: 40px 22px 80px; max-width: 720px;
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: #1b1930; background: #fbfaff; }
+  @media (prefers-color-scheme: dark) { body { color: #e9e7f5; background: #0f0d1c; } }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.4px; }
+  h2 { font-size: 19px; margin: 34px 0 8px; }
+  .sub { opacity: .65; margin: 0 0 28px; }
+  ul { padding-left: 20px; }
+  code { background: rgba(128,120,200,.16); padding: 1px 5px; border-radius: 4px; font-size: 14px; }
+  footer { margin-top: 44px; padding-top: 18px; border-top: 1px solid rgba(128,120,200,.28); opacity: .7; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy — Ghostly</h1>
+<p class="sub">Last updated: 2 September 2026</p>
+
+<p><strong>Ghostly does not collect, store, transmit or share any personal data.</strong> It has no
+accounts, no analytics, no crash reporting, no advertising, and no network code of any kind. It
+works entirely offline.</p>
+
+<h2>What the app stores</h2>
+<p>Ghostly saves a handful of settings in Android's private per-app storage on your device:
+whether the ghost is currently floating, his last position on screen, his size, whether taps pass
+through him, and whether vibration is enabled. This never leaves your device, is not readable by
+other apps, and is deleted when you uninstall Ghostly.</p>
+
+<h2>Permissions and why they are needed</h2>
+<ul>
+  <li><strong>Display over other apps</strong> (<code>SYSTEM_ALERT_WINDOW</code>) — draws the ghost
+      on top of other apps. This is the app's entire purpose.</li>
+  <li><strong>Notifications</strong> (<code>POST_NOTIFICATIONS</code>) — Android requires an ongoing
+      notification while the overlay runs; it carries the Stop button.</li>
+  <li><strong>Foreground service</strong> (<code>FOREGROUND_SERVICE</code>,
+      <code>FOREGROUND_SERVICE_SPECIAL_USE</code>) — keeps the overlay alive while you use other
+      apps.</li>
+  <li><strong>Run at startup</strong> (<code>RECEIVE_BOOT_COMPLETED</code>) — restores the ghost
+      after a reboot, only if he was floating before.</li>
+  <li><strong>Vibrate</strong> (<code>VIBRATE</code>) — the optional buzz when the ghost bolts.</li>
+</ul>
+<p>Ghostly requests no permission to your camera, microphone, location, contacts, files, or any
+other personal information, and cannot read the contents of the screen or of any app it floats
+over.</p>
+
+<h2>Children</h2>
+<p>Ghostly is not directed at children and collects no data from anyone, including children.</p>
+
+<h2>Changes</h2>
+<p>If this policy ever changes, the updated version will be posted at this address with a new date
+at the top.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: <a href="mailto:cvs.devs01@gmail.com">cvs.devs01@gmail.com</a></p>
+
+<footer>Ghostly · <code>com.shashank.ghostly</code></footer>
+</body>
+</html>

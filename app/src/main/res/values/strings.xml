@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Ghostly</string>
+    <string name="channel_name">Floating ghost</string>
+    <string name="channel_desc">Keeps the ghost floating above other apps.</string>
+</resources>

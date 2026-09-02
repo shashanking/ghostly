@@ -1,0 +1,37 @@
+<style>
+  html,body{margin:0;padding:0}
+  .canvas{width:1024px;height:500px;position:relative;overflow:hidden;
+    background:radial-gradient(ellipse at 78% 40%, #2a2159 0%, #151230 45%, #0B0A14 100%);
+    font-family:-apple-system,Helvetica,Arial,sans-serif;display:flex;align-items:center}
+  .copy{padding-left:74px;max-width:560px}
+  h1{margin:0;font-size:78px;line-height:1;color:#fff;letter-spacing:-1px;font-weight:600}
+  p{margin:18px 0 0;font-size:26px;line-height:1.35;color:#A79FD8;font-weight:400}
+  .ghosts{position:absolute;inset:0}
+  .g{position:absolute;filter:drop-shadow(0 6px 22px rgba(103,232,255,.5))}
+  .g1{right:96px;top:150px}
+  .g2{right:288px;top:70px;opacity:.5}
+  .g3{right:222px;top:322px;opacity:.32}
+</style>
+<div class="canvas">
+  <div class="copy">
+    <h1>Ghostly</h1>
+    <p>A shy little ghost that floats over every app — and drifts away when you tap.</p>
+  </div>
+  <div class="ghosts">
+    <svg class="g g1" width="190" height="190" viewBox="0 0 24 24">
+      <path fill="#ffffff" fill-opacity=".92" d="M12,2C7.86,2 4.5,5.36 4.5,9.5v10.9c0,0.72 0.82,1.13 1.4,0.7l1.72,-1.29c0.36,-0.27 0.85,-0.27 1.2,0l1.58,1.18c0.36,0.27 0.85,0.27 1.2,0l1.58,-1.18c0.36,-0.27 0.85,-0.27 1.2,0l1.72,1.29c0.58,0.43 1.4,0.02 1.4,-0.7V9.5C19.5,5.36 16.14,2 12,2z"/>
+      <circle cx="9.35" cy="9.6" r="1.72" fill="#EDEFFF"/><circle cx="14.65" cy="9.6" r="1.72" fill="#EDEFFF"/>
+      <circle cx="9.7" cy="9.9" r="0.95" fill="#15122B"/><circle cx="15.0" cy="9.9" r="0.95" fill="#15122B"/>
+      <circle cx="9.42" cy="9.6" r="0.3" fill="#fff"/><circle cx="14.72" cy="9.6" r="0.3" fill="#fff"/>
+      <ellipse cx="12" cy="13.1" rx="0.62" ry="0.5" fill="#15122B"/>
+    </svg>
+    <svg class="g g2" width="104" height="104" viewBox="0 0 24 24">
+      <path fill="#ffffff" fill-opacity=".9" d="M12,2C7.86,2 4.5,5.36 4.5,9.5v10.9c0,0.72 0.82,1.13 1.4,0.7l1.72,-1.29c0.36,-0.27 0.85,-0.27 1.2,0l1.58,1.18c0.36,0.27 0.85,0.27 1.2,0l1.58,-1.18c0.36,-0.27 0.85,-0.27 1.2,0l1.72,1.29c0.58,0.43 1.4,0.02 1.4,-0.7V9.5C19.5,5.36 16.14,2 12,2z"/>
+      <circle cx="9.7" cy="9.9" r="1.1" fill="#15122B"/><circle cx="14.3" cy="9.9" r="1.1" fill="#15122B"/>
+    </svg>
+    <svg class="g g3" width="72" height="72" viewBox="0 0 24 24">
+      <path fill="#ffffff" fill-opacity=".9" d="M12,2C7.86,2 4.5,5.36 4.5,9.5v10.9c0,0.72 0.82,1.13 1.4,0.7l1.72,-1.29c0.36,-0.27 0.85,-0.27 1.2,0l1.58,1.18c0.36,0.27 0.85,0.27 1.2,0l1.58,-1.18c0.36,-0.27 0.85,-0.27 1.2,0l1.72,1.29c0.58,0.43 1.4,0.02 1.4,-0.7V9.5C19.5,5.36 16.14,2 12,2z"/>
+      <circle cx="9.7" cy="9.9" r="1.1" fill="#15122B"/><circle cx="14.3" cy="9.9" r="1.1" fill="#15122B"/>
+    </svg>
+  </div>
+</div>

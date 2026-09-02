@@ -1,0 +1,19 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing
+keystore.properties
+*.jks
+
+# Build artefacts kept out of the repo
+Ghostly-*.apk
+*.aab
+
+# macOS
+.DS_Store
