@@ -43,6 +43,12 @@ import kotlinx.coroutines.launch
  * instant hand-off to [MainActivity].
  */
 class OnboardingActivity : Activity() {
+    // The three faces, resolved once per screen.
+    private val uiMedium: android.graphics.Typeface by lazy { Type.sansMedium(this) }
+    private val serifFace: android.graphics.Typeface by lazy { Type.serif(this) }
+    private val serifItalicFace: android.graphics.Typeface by lazy { Type.serifItalic(this) }
+    private val mono: android.graphics.Typeface by lazy { Type.mono(this) }
+
 
     private enum class Step { SPLASH, TUTORIAL_INTRO, TUTORIAL_ABILITIES, TUTORIAL_CONTROLS, TUTORIAL_MOOD, LOGIN, AVATAR, PERMISSIONS, LAUNCH }
 
@@ -156,7 +162,7 @@ class OnboardingActivity : Activity() {
             text = "Ghostly"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(18) }
         })
         col.addView(TextView(this).apply {
@@ -213,7 +219,7 @@ class OnboardingActivity : Activity() {
             text = page.title
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
         })
         column.addView(TextView(this).apply {
@@ -246,7 +252,7 @@ class OnboardingActivity : Activity() {
             stateListAnimator = null
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(24) }
             setOnClickListener { goTo(nextTutorialStep(index)) }
@@ -276,7 +282,7 @@ class OnboardingActivity : Activity() {
             text = "Welcome to Ghostly"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(24) }
         })
         column.addView(TextView(this).apply {
@@ -293,7 +299,7 @@ class OnboardingActivity : Activity() {
             stateListAnimator = null
             setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             background = rounded(Color.WHITE, dp(16).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(54)).apply { topMargin = dp(32) }
             setOnClickListener { signInWithGoogle() }
@@ -364,7 +370,7 @@ class OnboardingActivity : Activity() {
             text = "Choose your Ghost"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
         })
         column.addView(TextView(this).apply {
             text = "You can change this later in Style."
@@ -390,7 +396,7 @@ class OnboardingActivity : Activity() {
             stateListAnimator = null
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(28) }
             setOnClickListener {
@@ -447,7 +453,7 @@ class OnboardingActivity : Activity() {
             text = "One more thing"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
         })
         column.addView(TextView(this).apply {
             text = "Ghostly needs a couple of permissions to actually float."
@@ -484,7 +490,7 @@ class OnboardingActivity : Activity() {
             stateListAnimator = null
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(24) }
             isEnabled = overlayGranted
@@ -540,7 +546,7 @@ class OnboardingActivity : Activity() {
             text = title
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
         })
         textCol.addView(TextView(this).apply {
             text = desc
@@ -556,7 +562,7 @@ class OnboardingActivity : Activity() {
                 text = "Granted"
                 setTextColor(Palette.mint)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                typeface = uiMedium
             })
         } else {
             row.addView(Button(this).apply {
@@ -600,7 +606,7 @@ class OnboardingActivity : Activity() {
             text = "You're all set!"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(22) }
         })
         column.addView(TextView(this).apply {
@@ -617,7 +623,7 @@ class OnboardingActivity : Activity() {
             stateListAnimator = null
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(32) }
             setOnClickListener { finishOnboarding() }

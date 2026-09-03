@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -44,6 +46,24 @@ class GhostPlayground @JvmOverloads constructor(
     private var clock = 0f
     private var nextGlanceAt = 1.5f
     private var placed = false
+
+    /**
+     * He is out on the overlay, so the box is empty.
+     *
+     * There is only ever one ghost: the box holds him until "Let him float" sends him out, and
+     * "Call him home" brings him back. Drawing him in both places at once was the bug this fixes.
+     */
+    private var away = false
+    private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#3A3A46")
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(9f, 11f), 0f)
+    }
+    private val awayTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#8C8C99")
+        textAlign = Paint.Align.CENTER
+    }
+    private val emptyPath = Path()
 
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#33FFFFFF")
@@ -113,6 +133,23 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     /** Called by the settings screen when the character picker changes. */
+    /** Called by the app whenever the overlay starts or stops. */
+    fun setAway(value: Boolean) {
+        if (away == value) return
+        away = value
+        ghost.visibility = if (value) INVISIBLE else VISIBLE
+        if (!value) {
+            // He comes home to the middle of the box rather than wherever he was left.
+            posX = (width - size) / 2f
+            posY = (height - size) / 2f
+            velX = 0f
+            velY = 0f
+            apply()
+            resume()
+        }
+        invalidate()
+    }
+
     fun setSpecies(species: Species) {
         ghost.species = species
         ghost.invalidate()
@@ -188,6 +225,7 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (away) return false
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lookAt(event.x, event.y)
@@ -267,7 +305,43 @@ class GhostPlayground @JvmOverloads constructor(
             treatDrawable.setBounds((treatX - r).toInt(), (treatY - r).toInt(), (treatX + r).toInt(), (treatY + r).toInt())
             treatDrawable.draw(canvas)
         }
-        canvas.drawText("tap to spook him, hold to pet him", width / 2f, height - 18f * density, hintPaint)
+        if (away) {
+            drawEmpty(canvas)
+            return
+        }
+        canvas.drawText("hold him to pet him \u00b7 this box is his", width / 2f, height - 18f * density, hintPaint)
+    }
+
+    /** The shape of him, in dashes, so the box reads as vacated rather than broken. */
+    private fun drawEmpty(canvas: Canvas) {
+        val s = size * 1.25f
+        val left = (width - s) / 2f
+        val top = (height - s) / 2f - s * 0.06f
+        emptyPaint.strokeWidth = s * 0.028f
+        emptyPath.reset()
+        val pad = s * 0.10f
+        val gw = s - pad * 2f
+        val r = gw / 2f
+        val cx = left + pad + r
+        val rect = RectF(left + pad, top + pad, left + pad + gw, top + pad + gw)
+        emptyPath.addArc(rect, 180f, 180f)
+        val waveTop = top + s - pad - gw * 0.22f
+        val hw = gw / 3f
+        emptyPath.lineTo(left + pad + gw, waveTop)
+        for (i in 0 until 3) {
+            val x0 = left + pad + gw - i * hw
+            val x1 = x0 - hw
+            emptyPath.cubicTo(x0 - hw * 0.12f, waveTop + gw * 0.26f, x1 + hw * 0.12f, waveTop + gw * 0.26f, x1, waveTop)
+        }
+        emptyPath.lineTo(left + pad, top + pad + r)
+        emptyPath.close()
+        canvas.drawPath(emptyPath, emptyPaint)
+
+        awayTextPaint.typeface = Type.serifItalic(context)
+        awayTextPaint.textSize = 19f * density
+        canvas.drawText("out there somewhere", width / 2f, top + s + 34f * density, awayTextPaint)
+        canvas.drawText("drifting over your apps", width / 2f, height - 18f * density, hintPaint)
+        java.util.Objects.hash(cx)
     }
 
     private fun fleeFrom(fromX: Float, fromY: Float) {
@@ -288,7 +362,7 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     private fun tick(dt: Float) {
-        if (!placed) return
+        if (!placed || away) return
 
         if (feedState != FeedState.NONE) {
             tickFeeding(dt)

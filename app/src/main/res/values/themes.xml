@@ -1,7 +1,11 @@
 <resources>
+    <!-- Monochrome glass: the ground is near-black and the system bars melt into it. -->
     <style name="Theme.Ghostly" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#0B0A14</item>
-        <item name="android:navigationBarColor">#0B0A14</item>
-        <item name="android:windowBackground">#0B0A14</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">#08080B</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:fontFamily">@font/space_grotesk</item>
+        <item name="android:textColor">#F2F2F4</item>
     </style>
 </resources>

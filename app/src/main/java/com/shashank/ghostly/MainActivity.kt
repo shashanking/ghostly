@@ -46,6 +46,12 @@ import java.io.FileOutputStream
  * a game's always-on status bar.
  */
 class MainActivity : Activity() {
+    // The three faces, resolved once per screen.
+    private val uiMedium: android.graphics.Typeface by lazy { Type.sansMedium(this) }
+    private val serifFace: android.graphics.Typeface by lazy { Type.serif(this) }
+    private val serifItalicFace: android.graphics.Typeface by lazy { Type.serifItalic(this) }
+    private val mono: android.graphics.Typeface by lazy { Type.mono(this) }
+
 
     private enum class AppTab { HOME, SHOP, STYLE, SETTINGS }
 
@@ -81,6 +87,7 @@ class MainActivity : Activity() {
     private lateinit var angerBar: ProgressBar
     private lateinit var playLabel: TextView
     private lateinit var playRoot: View
+    private var homeActionsRow: LinearLayout? = null
     private lateinit var restLabel: TextView
     private lateinit var statusLabel: TextView
     private lateinit var primaryButton: Button
@@ -233,8 +240,8 @@ class MainActivity : Activity() {
         }
         nameLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
             setOnClickListener { showRenameDialog() }
         }
@@ -264,7 +271,7 @@ class MainActivity : Activity() {
         val text = TextView(this).apply {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginStart = dp(6) }
         }
         chip.addView(text)
@@ -334,40 +341,32 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(16), dp(20), dp(24))
         }
 
-        column.addView(TextView(this).apply {
-            text = "A shy little ghost that floats over everything.\n" +
-                "He watches what you're doing, and drifts off when you tap."
-            setTextColor(dim)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setLineSpacing(dp(4).toFloat(), 1f)
-        })
-
         playground = GhostPlayground(this).apply {
-            background = rounded(card, dp(24).toFloat(), cardStroke)
+            background = rounded(card, dp(28).toFloat(), cardStroke)
             elevation = dp(3).toFloat()
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(300)).apply { topMargin = dp(16) }
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(348)).apply { topMargin = dp(4) }
         }
         column.addView(playground)
 
+        // How he is, said in his own voice rather than drawn as four bars.
         moodLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(14) }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+            typeface = serifItalicFace
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
         }
         column.addView(moodLabel)
 
-        val needsCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(card, dp(18).toFloat(), cardStroke)
-            elevation = dp(2).toFloat()
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
-        }
-        hungerBar = addNeedRow(needsCard, "Hunger", IconGlyph.HUNGER, mint)
-        energyBar = addNeedRow(needsCard, "Energy", IconGlyph.ENERGY, mint)
-        happinessBar = addNeedRow(needsCard, "Happiness", IconGlyph.HAPPINESS, mint)
-        angerBar = addNeedRow(needsCard, "Anger", IconGlyph.ANGER, angerRed)
-        column.addView(needsCard)
+        // The four meters are gone from the screen. They still exist — the engine reads them, the
+        // ghost shows them — but a pet you read off a dashboard is a dashboard, not a pet. The bars
+        // stay allocated (never attached) so every refresh path keeps working untouched.
+        val hiddenNeeds = LinearLayout(this).apply { visibility = View.GONE }
+        hungerBar = addNeedRow(hiddenNeeds, "Hunger", IconGlyph.HUNGER, mint)
+        energyBar = addNeedRow(hiddenNeeds, "Energy", IconGlyph.ENERGY, mint)
+        happinessBar = addNeedRow(hiddenNeeds, "Happiness", IconGlyph.HAPPINESS, mint)
+        angerBar = addNeedRow(hiddenNeeds, "Anger", IconGlyph.ANGER, angerRed)
+        column.addView(hiddenNeeds)
 
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -405,9 +404,12 @@ class MainActivity : Activity() {
         }
         restLabel = rest.label
         actionsRow.addView(rest.root)
+        homeActionsRow = actionsRow
         column.addView(actionsRow)
 
         statusLabel = TextView(this).apply {
+            typeface = mono
+            letterSpacing = 0.12f
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
@@ -417,7 +419,7 @@ class MainActivity : Activity() {
         primaryButton = Button(this).apply {
             setTextColor(Color.parseColor("#0B0A14"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
             isAllCaps = false
             stateListAnimator = null
             background = gradientRounded(accent, accentDeep, dp(18).toFloat())
@@ -451,7 +453,7 @@ class MainActivity : Activity() {
             text = "Android says \"App was denied access\"?"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
         })
 
         addView(TextView(this@MainActivity).apply {
@@ -495,8 +497,8 @@ class MainActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "Shop"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            typeface = serifFace
         })
         column.addView(TextView(this).apply {
             text = "Feed and letting him nap are always free. Everything below runs on a daily " +
@@ -518,8 +520,8 @@ class MainActivity : Activity() {
         tokensCard.addView(iconView(IconGlyph.TOKEN, mint, 34))
         tokensBigText = TextView(this).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) }
         }
         tokensCard.addView(tokensBigText)
@@ -613,7 +615,7 @@ class MainActivity : Activity() {
             text = title
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
         })
         textCol.addView(TextView(this).apply {
             text = desc
@@ -657,8 +659,8 @@ class MainActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "Style"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            typeface = serifFace
         })
 
         column.addView(sectionLabel("Character"))
@@ -687,7 +689,7 @@ class MainActivity : Activity() {
         sizeValueLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
         }
         sizeHeaderRow.addView(sizeValueLabel)
         column.addView(sizeHeaderRow)
@@ -764,8 +766,8 @@ class MainActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "Settings"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            typeface = serifFace
         })
 
         column.addView(sectionLabel("Behaviour"))
@@ -984,7 +986,7 @@ class MainActivity : Activity() {
             color = Color.WHITE
             textSize = dp(22).toFloat()
             textAlign = Paint.Align.CENTER
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = uiMedium
         }
         canvas.drawText(petName(), w / 2f, dp(250).toFloat(), namePaint)
 
@@ -1046,9 +1048,10 @@ class MainActivity : Activity() {
 
     private fun sectionLabel(text: String) = TextView(this).apply {
         this.text = text.uppercase()
-        setTextColor(Color.parseColor("#6F6A96"))
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        letterSpacing = 0.14f
+        setTextColor(Palette.textFaint)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        typeface = mono
+        letterSpacing = 0.16f
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(24) }
     }
 
@@ -1162,7 +1165,10 @@ class MainActivity : Activity() {
         val canOverlay = Settings.canDrawOverlays(this)
         val floating = GhostOverlayService.isRunning
         lastKnownRunning = floating
+        // One ghost: the box empties the moment he goes out, and refills when he comes home.
+        if (::playground.isInitialized) playground.setAway(floating)
 
+        statusLabel.visibility = if (canOverlay && floating) View.GONE else View.VISIBLE
         statusLabel.text = when {
             !canOverlay -> "Ghostly needs the \"Display over other apps\" permission to leave this screen."
             floating -> "Floating now — go open any app, he's still there."
@@ -1171,16 +1177,25 @@ class MainActivity : Activity() {
 
         primaryButton.text = when {
             !canOverlay -> "Grant permission"
-            floating -> "Call him back"
+            floating -> "Call him home"
             else -> "Let him float"
         }
+        // Sending him out is the primary act, so it is bone; calling him home is the quiet inverse.
+        // Red stays reserved for anger.
         primaryButton.background = if (floating) {
-            gradientRounded(angerRed, Color.parseColor("#C94A48"), dp(18).toFloat())
+            rounded(Palette.glass, dp(20).toFloat(), Palette.glassStroke)
         } else {
-            gradientRounded(accent, accentDeep, dp(18).toFloat())
+            rounded(Palette.bone, dp(20).toFloat())
         }
+        primaryButton.setTextColor(if (floating) Palette.bone else Palette.ink)
 
         blockedCard.visibility = if (canOverlay) View.GONE else View.VISIBLE
+
+        // Feeding and petting happen in the box, so they are unavailable while he is floating.
+        homeActionsRow?.let { row ->
+            row.alpha = if (floating) 0.35f else 1f
+            for (i in 0 until row.childCount) row.getChildAt(i).isEnabled = !floating
+        }
         footerLabel.text = if (Prefs.clickThrough(this)) {
             "He's intangible: taps go straight through to whatever is underneath. Stop him from " +
                 "his notification."
@@ -1226,11 +1241,17 @@ class MainActivity : Activity() {
         restLabel.text = if (s.body.sleeping) "Wake him up" else "Let him nap"
 
         val name = petName()
+        // With the meters gone this line is the whole readout, so it says the most pressing thing
+        // first: asleep, then angry, then hungry, then tired, then sad, then contentment.
         moodLabel.text = when {
-            s.body.sleeping -> "$name is resting."
-            s.mood == Mood.ANGRY -> "$name is angry with you — a gift would help."
-            s.mood == Mood.SAD -> "$name is a little down."
-            else -> "$name is content."
+            GhostOverlayService.isRunning -> "somewhere over your apps"
+            s.body.sleeping -> "fast asleep"
+            s.mood == Mood.ANGRY -> "cross with you — a gift might help"
+            s.body.hunger < PetStats.HUNGRY_THRESHOLD -> "peckish, and looking at you"
+            s.body.energy < 25f -> "worn out"
+            s.mood == Mood.SAD -> "a little down"
+            s.body.happiness > 85f -> "delighted with everything"
+            else -> "content, and watching you"
         }
         nameLabel.text = name
 
