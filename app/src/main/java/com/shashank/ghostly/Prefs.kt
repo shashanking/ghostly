@@ -35,6 +35,8 @@ object Prefs {
     private const val KEY_USER_EMAIL = "user_email"
     private const val KEY_USER_DISPLAY_NAME = "user_display_name"
     private const val KEY_FED_AT = "fed_at"
+    private const val KEY_UNLOCKS_TODAY = "unlocks_today"
+    private const val KEY_UNLOCKS_DAY = "unlocks_day"
 
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
@@ -185,6 +187,21 @@ object Prefs {
     /** When he was last fed a treat, so the overlay (running as a separate surface) can notice a
      *  feed from the app and play the same drop-and-eat animation. 0 means "never". */
     fun fedAt(context: Context) = prefs(context).getLong(KEY_FED_AT, 0L)
+
+    /** Screen unlocks so far today (UTC day). Rolls over to zero on the first read of a new day. */
+    fun unlocksToday(context: Context): Int {
+        val p = prefs(context)
+        return if (p.getLong(KEY_UNLOCKS_DAY, 0L) == epochDay()) p.getInt(KEY_UNLOCKS_TODAY, 0) else 0
+    }
+
+    fun recordUnlock(context: Context) {
+        val p = prefs(context)
+        val today = epochDay()
+        val count = if (p.getLong(KEY_UNLOCKS_DAY, 0L) == today) p.getInt(KEY_UNLOCKS_TODAY, 0) else 0
+        p.edit().putLong(KEY_UNLOCKS_DAY, today).putInt(KEY_UNLOCKS_TODAY, count + 1).apply()
+    }
+
+    private fun epochDay(): Long = System.currentTimeMillis() / 86_400_000L
 
     fun markFed(context: Context) =
         prefs(context).edit().putLong(KEY_FED_AT, System.currentTimeMillis()).apply()

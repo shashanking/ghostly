@@ -58,6 +58,7 @@ class GhostOverlayService : Service() {
         private const val CHANNEL_ID = "ghost_overlay"
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
+        private const val BEHAVIOUR_INTERVAL_MS = 15_000L
         private const val MIN_FRAME_SECONDS = 1f / 30f
 
         /** Transparent ring around the ghost that still reacts to a tap, in dp. */
@@ -212,6 +213,19 @@ class GhostOverlayService : Service() {
     private var lastTapX = 0f
     private var lastTapY = 0f
 
+    /** The pet's brain. Content-driven; with no pack loaded it simply never proposes anything. */
+    private val behaviourEngine by lazy { BehaviourEngine.fromAssets(this) }
+    private var lastInteractionAt = 0L
+    private var lastPetEvent: PetEvent? = null
+
+    private val behaviourRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            proposeBehaviour()
+            handler.postDelayed(this, BEHAVIOUR_INTERVAL_MS)
+        }
+    }
+
     private var looping = false
     private var lastFrameAt = 0L
     private val handler = Handler(Looper.getMainLooper())
@@ -261,7 +275,11 @@ class GhostOverlayService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> stopLoop()
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> startLoop()
+                Intent.ACTION_SCREEN_ON -> startLoop()
+                Intent.ACTION_USER_PRESENT -> {
+                    Prefs.recordUnlock(this@GhostOverlayService)
+                    startLoop()
+                }
             }
         }
     }
@@ -399,13 +417,49 @@ class GhostOverlayService : Service() {
         // Feeding, playing or napping from the app writes straight to Prefs; catch it here too, so
         // he doesn't wait up to ten seconds to visibly react. A size or colour change from the
         // Style tab lands here too, resized/retinted in place rather than needing a restart.
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            noteEvent(key)
             refreshMood()
             syncAppearance()
         }
         prefsListener = listener
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
         refreshMood()
+        handler.postDelayed(behaviourRunnable, BEHAVIOUR_INTERVAL_MS)
+    }
+
+    /**
+     * Ask the brain what he feels like doing. For now the decision is only reported — driving the
+     * animations from it is the next step, and belongs on the view side.
+     */
+    /** Something the user did — the brain wants to know what happened last, and when. */
+    private fun noteInteraction(event: PetEvent) {
+        lastPetEvent = event
+        lastInteractionAt = System.currentTimeMillis()
+    }
+
+    /** Feeding and napping happen in the app, not on the overlay; they arrive as pref changes. */
+    private fun noteEvent(key: String?) {
+        when (key) {
+            "fed_at" -> noteInteraction(PetEvent.FED)
+            "sleeping" -> if (Prefs.sleeping(this)) noteInteraction(PetEvent.NAPPED)
+        }
+    }
+
+    private fun proposeBehaviour() {
+        if (!behaviourEngine.isLoaded) return
+        val petContext = PetContext.of(this, lastPetEvent, lastInteractionAt)
+        val behaviour = behaviourEngine.next(petContext) ?: return
+        android.util.Log.i(
+            "GhostBehaviour",
+            "${behaviour.id} -> ${behaviour.emote}/${behaviour.locomotion} " +
+                "vocal=${behaviour.vocal} bubble=${behaviour.bubble.token} " +
+                "intensity=${behaviour.intensity} | ctx=${petContext.species.id} " +
+                "${petContext.timeOfDay.id} hunger=${petContext.hunger.toInt()} " +
+                "energy=${petContext.energy.toInt()} happy=${petContext.happiness.toInt()} " +
+                "battery=${petContext.batteryBucket.id} charging=${petContext.charging} " +
+                "since=${petContext.minutesSinceInteraction}m"
+        )
     }
 
     /** Resizes and/or retints the live window in place when the Style tab changes, keeping him
@@ -613,6 +667,7 @@ class GhostOverlayService : Service() {
 
     /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
     private fun pet() {
+        noteInteraction(PetEvent.PETTED)
         val now = SystemClock.uptimeMillis()
         if (now - lastPetAt < PET_ANIMATION_MS) return
         lastPetAt = now
@@ -635,6 +690,7 @@ class GhostOverlayService : Service() {
 
     /** Dash off in a random direction, generally away from [fromX], [fromY]. */
     private fun fleeFrom(fromX: Float, fromY: Float) {
+        noteInteraction(PetEvent.SPOOKED)
         val cx = posX + windowPx / 2f
         val cy = posY + windowPx / 2f
         var dx = cx - fromX
