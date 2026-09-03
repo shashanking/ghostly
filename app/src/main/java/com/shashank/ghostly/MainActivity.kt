@@ -106,8 +106,6 @@ class MainActivity : Activity() {
     private val shadeTiles = mutableListOf<Pair<Shade, OptionTile>>()
 
     // Settings
-    private lateinit var modeSwitch: Switch
-    private lateinit var footerLabel: TextView
 
     private var lastKnownRunning: Boolean? = null
 
@@ -407,8 +405,6 @@ class MainActivity : Activity() {
         column.addView(actionsRow)
 
         statusLabel = TextView(this).apply {
-            typeface = mono
-            letterSpacing = 0.12f
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
@@ -796,40 +792,23 @@ class MainActivity : Activity() {
         })
 
         column.addView(sectionLabel("Behaviour"))
-        modeSwitch = Switch(this).apply {
-            text = "Let taps pass through him"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            isChecked = Prefs.clickThrough(this@MainActivity)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
-            setOnCheckedChangeListener { _, checked -> chooseMode(checked) }
-        }
-        column.addView(modeSwitch)
-
         column.addView(TextView(this).apply {
-            text = "On: nothing he floats over is ever blocked — buttons and keyboard keys still " +
-                "work through him. He notices taps but can't tell where they landed, so he can't " +
-                "be poked precisely, petted, or dragged.\n" +
-                "Off: he's solid — tap to poke, hold to pet, drag to move, double-tap to open " +
-                "this screen — but he swallows taps where he sits."
-            setTextColor(Palette.textFaint)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            text = "He is intangible out there: every tap goes straight through him, so nothing " +
+                "he floats over is ever blocked. Feeding and petting happen in his box on the " +
+                "Home tab — that is the one place he can be touched."
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setLineSpacing(dp(3).toFloat(), 1f)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
         })
-
-        footerLabel = TextView(this).apply {
-            setTextColor(mint)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setLineSpacing(dp(3).toFloat(), 1f)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
-        }
-        column.addView(footerLabel)
 
         column.addView(Switch(this).apply {
             text = "Buzz when he runs"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Type.sans(this@MainActivity)
+            thumbTintList = ColorStateList.valueOf(Palette.bone)
+            trackTintList = ColorStateList.valueOf(Palette.cardStroke)
             isChecked = Prefs.hapticsEnabled(this@MainActivity)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
             setOnCheckedChangeListener { _, checked -> Prefs.setHapticsEnabled(this@MainActivity, checked) }
@@ -1221,13 +1200,6 @@ class MainActivity : Activity() {
             row.alpha = if (floating) 0.35f else 1f
             for (i in 0 until row.childCount) row.getChildAt(i).isEnabled = !floating
         }
-        footerLabel.text = if (Prefs.clickThrough(this)) {
-            "He's intangible: taps go straight through to whatever is underneath. Stop him from " +
-                "his notification."
-        } else {
-            "He's solid: drag him anywhere, hold still on him to pet him, double-tap him to open " +
-                "this screen, or use the Stop action in his notification."
-        }
 
         val currentSize = Prefs.sizeDp(this)
         sizeTiles.forEach { (sizeDp, tile) -> optionTileState(tile, sizeDp == currentSize) }
@@ -1315,12 +1287,6 @@ class MainActivity : Activity() {
         }
         // The service flips its own flag; give it a beat before redrawing.
         primaryButton.postDelayed({ refreshState() }, 250)
-    }
-
-    private fun chooseMode(clickThrough: Boolean) {
-        Prefs.setClickThrough(this, clickThrough)
-        restartOverlayIfRunning()
-        refreshState()
     }
 
     private fun restartOverlayIfRunning() {

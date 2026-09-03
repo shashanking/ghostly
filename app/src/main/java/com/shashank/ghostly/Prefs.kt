@@ -92,9 +92,17 @@ object Prefs {
 
     /** A hue in degrees [0, 360) the whole body is rotated to, or null for his original colours —
      *  see [GhostView.setTint]. */
+    /**
+     * Always null: he is monochrome now, and [Shade] carries the choice that hue used to.
+     *
+     * A hue stored by an older build would otherwise leave someone with, say, a green ghost and no
+     * control left to clear it — the swatches that set it are gone. So the first read after the
+     * update drops the key for good.
+     */
     fun colorHue(context: Context): Float? {
-        val value = prefs(context).getFloat(KEY_COLOR_HUE, -1f)
-        return if (value < 0f) null else value
+        val store = prefs(context)
+        if (store.contains(KEY_COLOR_HUE)) store.edit().remove(KEY_COLOR_HUE).apply()
+        return null
     }
 
     fun setColorHue(context: Context, hue: Float?) =
@@ -106,7 +114,16 @@ object Prefs {
      * an overlay *where* an outside tap landed, so in this mode he cannot be poked precisely or
      * dragged.
      */
-    fun clickThrough(context: Context) = prefs(context).getBoolean(KEY_CLICK_THROUGH, true)
+    /**
+     * Always true. He can only be touched in his box now, so the overlay is unconditionally
+     * intangible and there is nothing left to choose — which also means nothing he floats over is
+     * ever blocked, on any device, in any state. An older build's stored preference is dropped.
+     */
+    fun clickThrough(context: Context): Boolean {
+        val store = prefs(context)
+        if (store.contains(KEY_CLICK_THROUGH)) store.edit().remove(KEY_CLICK_THROUGH).apply()
+        return true
+    }
 
     fun setClickThrough(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_CLICK_THROUGH, value).apply()
