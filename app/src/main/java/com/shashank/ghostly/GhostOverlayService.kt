@@ -102,7 +102,15 @@ class GhostOverlayService : Service() {
 
     private var density = 1f
     private var clickThrough = true
+
+    /** The whole display. */
     private val bounds = Rect()
+
+    /**
+     * Where he is actually allowed to float: the display minus the status bar, the navigation or
+     * gesture bar and any cutout. Without this he drifts underneath the bottom bar and disappears.
+     */
+    private val usable = Rect()
 
     /** Size of the ghost, and of the window that carries him (ghost + halo on every side). */
     private var ghostPx = 0
@@ -462,12 +470,26 @@ class GhostOverlayService : Service() {
     private fun refreshBounds() {
         val wm = windowManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            bounds.set(wm.currentWindowMetrics.bounds)
+            val metrics = wm.currentWindowMetrics
+            bounds.set(metrics.bounds)
+            // Ignoring visibility keeps the play area stable: the bars hiding for a full-screen
+            // video shouldn't let him wander somewhere he'll be clipped a moment later.
+            val bars = metrics.windowInsets.getInsetsIgnoringVisibility(
+                android.view.WindowInsets.Type.systemBars() or
+                    android.view.WindowInsets.Type.displayCutout()
+            )
+            usable.set(
+                bounds.left + bars.left,
+                bounds.top + bars.top,
+                bounds.right - bars.right,
+                bounds.bottom - bars.bottom
+            )
         } else {
             val size = android.graphics.Point()
             @Suppress("DEPRECATION")
             wm.defaultDisplay.getRealSize(size)
             bounds.set(0, 0, size.x, size.y)
+            usable.set(bounds)
         }
     }
 
@@ -967,10 +989,14 @@ class GhostOverlayService : Service() {
     }
 
     // The ghost — not the window's transparent halo — is what has to stay on screen.
-    private fun minX() = -haloPx - ghostPx * 0.15f
-    private fun maxX() = bounds.width() - windowPx + haloPx + ghostPx * 0.15f
-    private fun minY() = -haloPx - ghostPx * 0.15f
-    private fun maxY() = bounds.height() - windowPx + haloPx + ghostPx * 0.15f
+    // A sliver of overhang still looks good — he nuzzles the edge — but never enough to hide him
+    // behind a system bar.
+    private fun overhang() = ghostPx * 0.05f
+
+    private fun minX() = usable.left - haloPx - overhang()
+    private fun maxX() = usable.right - windowPx + haloPx + overhang()
+    private fun minY() = usable.top - haloPx - overhang()
+    private fun maxY() = usable.bottom - windowPx + haloPx + overhang()
 
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
