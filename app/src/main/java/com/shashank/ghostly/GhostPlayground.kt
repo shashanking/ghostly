@@ -156,6 +156,10 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     /** Called by the settings screen when the colour swatch changes. */
+    fun setShade(shade: Shade) {
+        ghost.setShade(shade)
+    }
+
     fun setTint(hue: Float?) {
         ghost.setTint(hue)
     }

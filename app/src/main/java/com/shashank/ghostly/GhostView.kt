@@ -37,11 +37,11 @@ class GhostView(context: Context) : View(context) {
     }
 
     /** How solid the body is. Low enough to read as a ghost, high enough to see on a busy screen. */
-    private val bodyAlpha = 188
+    private var shade: Shade = Shade.DEFAULT
 
     private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        alpha = bodyAlpha
+        alpha = Shade.DEFAULT.bodyAlpha
     }
     private val shadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
@@ -58,7 +58,7 @@ class GhostView(context: Context) : View(context) {
     private val pupilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF15122B") }
     private val glintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val mouthPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D915122B") }
-    private val blushPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#3DFF7BC1") }
+    private val blushPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#26FFFFFF") }
 
     /** Closed eyes and a frown share the mouth's ink colour, but stroked rather than filled. */
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -239,11 +239,22 @@ class GhostView(context: Context) : View(context) {
         )
     }
 
-    /** Recolours body, outline and glow to [tintHue], keeping each paint's original weight. */
+    /** Which of the four looks he wears. */
+    fun setShade(shade: Shade) {
+        if (this.shade == shade) return
+        this.shade = shade
+        applyTint()
+    }
+
+    /** Recolours body, outline and glow to [tintHue] and [shade], keeping each paint's weight. */
     private fun applyTint() {
-        bodyPaint.color = if (tintHue == null) Color.WHITE else Color.HSVToColor(floatArrayOf(tintHue!!, 0.14f, 1f))
-        bodyPaint.alpha = bodyAlpha
-        outlinePaint.color = rehued(Color.parseColor("#8C6C63C9"))
+        bodyPaint.color = if (tintHue == null) shade.bodyColor else Color.HSVToColor(floatArrayOf(tintHue!!, 0.14f, 1f))
+        bodyPaint.alpha = shade.bodyAlpha
+        pupilPaint.color = shade.inkColor
+        scleraPaint.color = shade.scleraColor
+        mouthPaint.color = shade.inkColor
+        linePaint.color = shade.inkColor
+        outlinePaint.color = if (tintHue == null) shade.outlineColor else rehued(Color.parseColor("#8C6C63C9"))
         scleraRimPaint.color = rehued(Color.parseColor("#556C63C9"))
         whiskerPaint.color = rehued(Color.parseColor("#8C6C63C9"))
         zzzPaint.color = rehued(Color.parseColor("#C86C63C9"))

@@ -102,9 +102,8 @@ class MainActivity : Activity() {
 
     // Style
     private val speciesButtons = mutableListOf<Pair<Species, Button>>()
-    private lateinit var sizeSeekBar: SeekBar
-    private lateinit var sizeValueLabel: TextView
-    private val colorSwatches = mutableListOf<Pair<Float?, View>>()
+    private val sizeTiles = mutableListOf<Pair<Int, OptionTile>>()
+    private val shadeTiles = mutableListOf<Pair<Shade, OptionTile>>()
 
     // Settings
     private lateinit var modeSwitch: Switch
@@ -663,7 +662,7 @@ class MainActivity : Activity() {
             typeface = serifFace
         })
 
-        column.addView(sectionLabel("Character"))
+        column.addView(sectionLabel("Kind"))
         val speciesRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
@@ -676,70 +675,96 @@ class MainActivity : Activity() {
         }
         column.addView(speciesRow)
 
-        val sizeHeaderRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
-        }
-        sizeHeaderRow.addView(TextView(this).apply {
-            text = "Size"
-            setTextColor(dim)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-        })
-        sizeValueLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = uiMedium
-        }
-        sizeHeaderRow.addView(sizeValueLabel)
-        column.addView(sizeHeaderRow)
-
-        sizeSeekBar = SeekBar(this).apply {
-            max = Prefs.SIZE_MAX - Prefs.SIZE_MIN
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
-            progressTintList = ColorStateList.valueOf(accent)
-            thumbTintList = ColorStateList.valueOf(accent)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    sizeValueLabel.text = "${Prefs.SIZE_MIN + progress} dp"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    chooseSize(Prefs.SIZE_MIN + seekBar.progress)
-                }
-            })
-        }
-        column.addView(sizeSeekBar)
-
-        column.addView(sectionLabel("Colour"))
-        val colorRow = LinearLayout(this).apply {
+        // Size: three named options, each showing him at that size, rather than a number on a rail.
+        column.addView(sectionLabel("Size"))
+        val sizeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
         }
-        val swatches = listOf<Float?>(null, 189f, 265f, 340f, 25f, 145f)
-        swatches.forEachIndexed { index, hue ->
-            val swatch = colorSwatch(hue) { chooseTint(hue) }
-            if (index > 0) (swatch.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
-            colorSwatches += hue to swatch
-            colorRow.addView(swatch)
+        listOf(
+            Triple("Wisp", Prefs.SIZE_WISP, 22),
+            Triple("Spook", Prefs.SIZE_SPOOK, 34),
+            Triple("Haunt", Prefs.SIZE_HAUNT, 48),
+        ).forEachIndexed { index, (label, sizeDp, previewDp) ->
+            val tile = optionTile(label, previewDp) { chooseSize(sizeDp) }
+            if (index > 0) (tile.root.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
+            sizeTiles += sizeDp to tile
+            sizeRow.addView(tile.root)
         }
-        column.addView(colorRow)
+        column.addView(sizeRow)
+
+        // Shade: named looks. A black-and-white ghost has no hue to pick, so the choice is how much
+        // of the screen you see through him — and Ink, for anyone on a pale wallpaper.
+        column.addView(sectionLabel("Shade"))
+        val shadeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
+        }
+        Shade.entries.forEachIndexed { index, shade ->
+            val tile = optionTile(shade.label, 30, shade) { chooseShade(shade) }
+            if (index > 0) (tile.root.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
+            shadeTiles += shade to tile
+            shadeRow.addView(tile.root)
+        }
+        column.addView(shadeRow)
 
         scroll.addView(column)
         return scroll
     }
 
-    /** A round tap target — his own colours for "no tint", a solid hue for everything else. */
-    private fun colorSwatch(hue: Float?, onClick: () -> Unit) = FrameLayout(this).apply {
-        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-        val fillColor = if (hue == null) Color.parseColor("#8C6C63C9") else
-            Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f))
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(fillColor)
+    private class OptionTile(val root: LinearLayout, val label: TextView, val preview: GhostView)
+
+    /**
+     * One choice, showing the thing itself: a real [GhostView] at the size (or in the shade) the
+     * option selects, so picking is a matter of looking rather than reading a number.
+     */
+    private fun optionTile(
+        label: String,
+        previewDp: Int,
+        shade: Shade? = null,
+        onClick: () -> Unit,
+    ): OptionTile {
+        val preview = GhostView(this).apply {
+            species = Prefs.species(this@MainActivity)
+            setShade(shade ?: Prefs.shade(this@MainActivity))
+            isClickable = false
+            layoutParams = FrameLayout.LayoutParams(
+                dp(previewDp),
+                (dp(previewDp) * (1f + GhostView.BUBBLE_HEADROOM)).toInt(),
+                android.view.Gravity.CENTER,
+            )
         }
-        setOnClickListener { onClick() }
-        addPressBounce(this)
+        // A fixed-height well so all three size options are the same size of tile.
+        val well = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(76))
+            addView(preview)
+        }
+        val text = TextView(this).apply {
+            this.text = label
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
+        }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(8), dp(12), dp(8), dp(10))
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            addView(well)
+            addView(text)
+            setOnClickListener { onClick() }
+        }
+        addPressBounce(root)
+        return OptionTile(root, text, preview)
+    }
+
+    private fun optionTileState(tile: OptionTile, selected: Boolean) {
+        tile.root.background = if (selected) {
+            rounded(Palette.glass, dp(18).toFloat(), Palette.bone)
+        } else {
+            rounded(Palette.card, dp(18).toFloat(), Palette.cardStroke)
+        }
+        tile.label.setTextColor(if (selected) Color.WHITE else Palette.dim)
     }
 
     private fun pickerButton(label: String, onClick: () -> Unit) = Button(this).apply {
@@ -1205,14 +1230,12 @@ class MainActivity : Activity() {
         }
 
         val currentSize = Prefs.sizeDp(this)
-        sizeSeekBar.progress = currentSize - Prefs.SIZE_MIN
-        sizeValueLabel.text = "$currentSize dp"
+        sizeTiles.forEach { (sizeDp, tile) -> optionTileState(tile, sizeDp == currentSize) }
+        val currentShade = Prefs.shade(this)
+        shadeTiles.forEach { (shade, tile) -> optionTileState(tile, shade == currentShade) }
 
         val currentSpecies = Prefs.species(this)
         speciesButtons.forEach { (species, button) -> stylePickerState(button, species == currentSpecies) }
-
-        val currentHue = Prefs.colorHue(this)
-        colorSwatches.forEach { (hue, swatch) -> swatchSelectedState(swatch, hue == currentHue) }
 
         refreshNeeds()
     }
@@ -1223,13 +1246,7 @@ class MainActivity : Activity() {
             dp(14).toFloat(),
             if (selected) accent else cardStroke
         )
-        button.setTextColor(if (selected) Color.WHITE else dim)
-    }
-
-    private fun swatchSelectedState(swatch: View, selected: Boolean) {
-        swatch.scaleX = if (selected) 1.15f else 1f
-        swatch.scaleY = if (selected) 1.15f else 1f
-        swatch.alpha = if (selected) 1f else 0.75f
+        button.setTextColor(if (selected) Palette.ink else dim)
     }
 
     private fun refreshNeeds() {
@@ -1319,6 +1336,13 @@ class MainActivity : Activity() {
     private fun chooseSize(sizeDp: Int) {
         // The overlay's own prefs listener resizes it live, in place — no restart needed.
         Prefs.setSizeDp(this, sizeDp)
+        refreshState()
+    }
+
+    private fun chooseShade(shade: Shade) {
+        Prefs.setShade(this, shade)
+        playground.setShade(shade)
+        shadeTiles.forEach { (s2, tile) -> optionTileState(tile, s2 == shade) }
         refreshState()
     }
 

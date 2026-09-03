@@ -35,6 +35,7 @@ object Prefs {
     private const val KEY_USER_EMAIL = "user_email"
     private const val KEY_USER_DISPLAY_NAME = "user_display_name"
     private const val KEY_FED_AT = "fed_at"
+    private const val KEY_SHADE = "shade"
     private const val KEY_UNLOCKS_TODAY = "unlocks_today"
     private const val KEY_SESSION_TOKEN = "session_token"
     private const val KEY_USER_ID = "user_id"
@@ -50,7 +51,12 @@ object Prefs {
 
     const val SIZE_MIN = 16
     const val SIZE_MAX = 72
-    const val SIZE_DEFAULT = 32
+    const val SIZE_DEFAULT = 36
+
+    /** The three sizes he comes in, as named options rather than a slider. */
+    const val SIZE_WISP = 24
+    const val SIZE_SPOOK = 36
+    const val SIZE_HAUNT = 52
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -70,11 +76,15 @@ object Prefs {
     fun savePosition(context: Context, x: Float, y: Float) =
         prefs(context).edit().putFloat(KEY_X, x).putFloat(KEY_Y, y).apply()
 
+    /** The three named sizes, smallest first. */
+    val SIZES = listOf(SIZE_WISP, SIZE_SPOOK, SIZE_HAUNT)
+
     fun sizeDp(context: Context): Int {
-        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT)
-        // Guards against a stray value from a much older build's size scale, not against the
-        // slider itself — the slider already clamps to [SIZE_MIN, SIZE_MAX].
-        return stored.coerceIn(SIZE_MIN, SIZE_MAX)
+        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT).coerceIn(SIZE_MIN, SIZE_MAX)
+        // Size is a choice of three now, not a slider. Anything stored by an older build — or by
+        // the slider that used to be here — snaps to the nearest of them, so the picker always has
+        // something selected and he never changes size behind the user's back by more than a few dp.
+        return SIZES.minByOrNull { kotlin.math.abs(it - stored) } ?: SIZE_DEFAULT
     }
 
     fun setSizeDp(context: Context, value: Int) =
@@ -207,6 +217,11 @@ object Prefs {
         val count = if (p.getLong(KEY_UNLOCKS_DAY, 0L) == today) p.getInt(KEY_UNLOCKS_TODAY, 0) else 0
         p.edit().putLong(KEY_UNLOCKS_DAY, today).putInt(KEY_UNLOCKS_TODAY, count + 1).apply()
     }
+
+    fun shade(context: Context): Shade = Shade.fromId(prefs(context).getString(KEY_SHADE, null))
+
+    fun setShade(context: Context, shade: Shade) =
+        prefs(context).edit().putString(KEY_SHADE, shade.id).apply()
 
     private fun epochDay(): Long = System.currentTimeMillis() / 86_400_000L
 

@@ -185,6 +185,7 @@ class GhostOverlayService : Service() {
     // So the notification is only rebuilt when what it would say actually changes.
     private var notifiedSleeping = false
     private var lastExpression: Expression = Expression.NONE
+    private var lastShade: Shade = Shade.DEFAULT
     private var notifiedMood: Mood = Mood.CONTENT
 
     // Drag bookkeeping
@@ -387,6 +388,7 @@ class GhostOverlayService : Service() {
         refreshBounds()
 
         val view = GhostView(this)
+        view.setShade(Prefs.shade(this))
         view.species = Prefs.species(this)
         lastTintHue = Prefs.colorHue(this)
         view.setTint(lastTintHue)
@@ -524,6 +526,12 @@ class GhostOverlayService : Service() {
             runCatching { windowManager.updateViewLayout(container, params) }
             lastAppliedX = params.x
             lastAppliedY = params.y
+        }
+
+        val newShade = Prefs.shade(this)
+        if (newShade != lastShade) {
+            lastShade = newShade
+            ghost?.setShade(newShade)
         }
 
         val newFedAt = Prefs.fedAt(this)
