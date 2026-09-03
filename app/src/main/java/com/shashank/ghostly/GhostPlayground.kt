@@ -129,7 +129,15 @@ class GhostPlayground @JvmOverloads constructor(
         setWillNotDraw(false)
         ghost.species = Prefs.species(context)
         ghost.setTint(Prefs.colorHue(context))
-        addView(ghost, LayoutParams(size, (size * (1f + GhostView.BUBBLE_HEADROOM)).toInt()))
+        // Wider than he is on purpose: the fixed-size bubble spills into the side room.
+        ghost.setBodySize(size)
+        addView(
+            ghost,
+            LayoutParams(
+                size + GhostView.bubbleSidePx(density) * 2,
+                size + GhostView.headroomPx(density, size)
+            )
+        )
     }
 
     /** Called by the settings screen when the character picker changes. */
@@ -543,11 +551,14 @@ class GhostPlayground @JvmOverloads constructor(
      * is bubble headroom — so it is shifted up by that much when placed.
      */
     private fun apply() {
-        ghost.translationX = posX
+        ghost.translationX = posX - sideRoom
         ghost.translationY = posY - headroom
     }
 
-    private val headroom: Float get() = size * GhostView.BUBBLE_HEADROOM
+    private val headroom: Float get() = GhostView.headroomPx(density, size).toFloat()
+
+    /** Blank room either side of his body inside the view — see the bubble note in [GhostView]. */
+    private val sideRoom: Float get() = GhostView.bubbleSidePx(density).toFloat()
 
     private companion object {
         const val PET_HOLD_MS = 1_000L

@@ -123,6 +123,14 @@ class GhostOverlayService : Service() {
     /** Space above him inside the window, so a speech bubble is never clipped. */
     private var headroomPx = 0
 
+    /**
+     * Blank room on each side of his body, inside the window. The speech bubble is a fixed size at
+     * every ghost size, so on a small ghost it is wider than he is and needs somewhere to go.
+     * [posX] still means the left edge of his body's own window — only the window we hand the
+     * window manager is wider, and it is pushed left by this much to keep him where he was.
+     */
+    private var sidePx = 0
+
     // What the window was last resized/retinted to, so the prefs listener only touches the
     // window when the size or colour actually changed rather than on every stat tick.
     private var lastSizeDp = -1
@@ -383,11 +391,13 @@ class GhostOverlayService : Service() {
         ghostPx = (lastSizeDp * density).toInt()
         haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
         windowPx = ghostPx + haloPx * 2
-        headroomPx = (ghostPx * GhostView.BUBBLE_HEADROOM).toInt()
+        headroomPx = GhostView.headroomPx(density, ghostPx)
+        sidePx = GhostView.bubbleSidePx(density)
         driftSpeed = 18f * density
         refreshBounds()
 
         val view = GhostView(this)
+        view.setBodySize(ghostPx)
         view.setShade(Prefs.shade(this))
         view.species = Prefs.species(this)
         lastTintHue = Prefs.colorHue(this)
@@ -397,7 +407,11 @@ class GhostOverlayService : Service() {
         val container = FrameLayout(this).apply {
             addView(
                 view,
-                FrameLayout.LayoutParams(ghostPx, ghostPx + headroomPx, android.view.Gravity.CENTER)
+                FrameLayout.LayoutParams(
+                    ghostPx + sidePx * 2,
+                    ghostPx + headroomPx,
+                    android.view.Gravity.CENTER
+                )
             )
         }
         root = container
@@ -413,7 +427,7 @@ class GhostOverlayService : Service() {
         }
 
         params = WindowManager.LayoutParams(
-            windowPx,
+            windowPx + sidePx * 2,
             windowPx + headroomPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
@@ -425,7 +439,7 @@ class GhostOverlayService : Service() {
         posX = Prefs.lastX(this, bounds.width() * 0.72f)
         posY = Prefs.lastY(this, bounds.height() * 0.35f)
         clampIntoBounds()
-        params.x = posX.toInt()
+        params.x = posX.toInt() - sidePx
         params.y = posY.toInt()
 
         container.setOnTouchListener { _, event -> onGhostTouch(event) }
@@ -582,13 +596,18 @@ class GhostOverlayService : Service() {
             posY -= delta
             ghostPx = newGhostPx
             windowPx = newWindowPx
-            headroomPx = (ghostPx * GhostView.BUBBLE_HEADROOM).toInt()
+            headroomPx = GhostView.headroomPx(density, ghostPx)
             clampIntoBounds()
-            params.width = windowPx
+            params.width = windowPx + sidePx * 2
             params.height = windowPx + headroomPx
-            params.x = posX.toInt()
+            params.x = posX.toInt() - sidePx
             params.y = posY.toInt()
-            view.layoutParams = FrameLayout.LayoutParams(ghostPx, ghostPx + headroomPx, android.view.Gravity.CENTER)
+            view.setBodySize(ghostPx)
+            view.layoutParams = FrameLayout.LayoutParams(
+                ghostPx + sidePx * 2,
+                ghostPx + headroomPx,
+                android.view.Gravity.CENTER
+            )
             runCatching { windowManager.updateViewLayout(container, params) }
             lastAppliedX = params.x
             lastAppliedY = params.y
@@ -1178,7 +1197,10 @@ class GhostOverlayService : Service() {
     // His body starts headroomPx below the top of the window, so the vertical bounds shift by it:
     // he may sit at the very top of the screen with the bubble space hanging off-screen above.
     private fun minY() = usable.top - haloPx - headroomPx - overhang()
-    private fun maxY() = usable.bottom - windowPx + haloPx + overhang()
+    // The window is windowPx + headroomPx tall and his body sits in the BOTTOM of it, so the floor
+    // has to come up by the headroom as well — without this he sinks below the navigation bar by
+    // exactly the height of his own speech bubble.
+    private fun maxY() = usable.bottom - headroomPx - windowPx + haloPx + overhang()
 
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
@@ -1195,7 +1217,7 @@ class GhostOverlayService : Service() {
         if (nx == lastAppliedX && ny == lastAppliedY) return
         lastAppliedX = nx
         lastAppliedY = ny
-        params.x = nx
+        params.x = nx - sidePx
         params.y = ny
         runCatching { windowManager.updateViewLayout(view, params) }
     }

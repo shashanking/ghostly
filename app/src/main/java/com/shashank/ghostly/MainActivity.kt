@@ -680,7 +680,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
         }
         listOf(
-            Triple("Wisp", Prefs.SIZE_WISP, 22),
+            Triple("Wisp", Prefs.SIZE_WISP, 26),
             Triple("Spook", Prefs.SIZE_SPOOK, 34),
             Triple("Haunt", Prefs.SIZE_HAUNT, 48),
         ).forEachIndexed { index, (label, sizeDp, previewDp) ->
@@ -728,7 +728,7 @@ class MainActivity : Activity() {
             isClickable = false
             layoutParams = FrameLayout.LayoutParams(
                 dp(previewDp),
-                (dp(previewDp) * (1f + GhostView.BUBBLE_HEADROOM)).toInt(),
+                dp(previewDp) + GhostView.headroomPx(resources.displayMetrics.density, dp(previewDp)),
                 android.view.Gravity.CENTER,
             )
         }

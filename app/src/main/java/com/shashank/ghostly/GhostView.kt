@@ -34,6 +34,27 @@ class GhostView(context: Context) : View(context) {
          * to be. Whoever sizes a GhostView should make it `width * (1 + BUBBLE_HEADROOM)` tall.
          */
         const val BUBBLE_HEADROOM = 0.46f
+
+        /**
+         * The bubble does not shrink with him. It is sized for the largest ghost and kept there, so
+         * "Meow" is exactly as readable on a Wisp as on a Haunt — the text is for you, not for him.
+         */
+        const val BUBBLE_TEXT_DP = 9f
+        const val BUBBLE_PAD_X_DP = 6f
+        const val BUBBLE_PAD_Y_DP = 4f
+
+        /** Headroom in pixels: proportional for a big ghost, but never less than a bubble needs. */
+        /**
+         * Room on EACH side of his body square, so the fixed-size bubble has somewhere to sit.
+         * Without it the view is exactly as wide as he is and a bubble wider than a small ghost
+         * gets sliced off at the view edge — which is what happened at Wisp size.
+         */
+        const val BUBBLE_SIDE_DP = 44f
+
+        fun bubbleSidePx(density: Float): Int = (BUBBLE_SIDE_DP * density).toInt()
+
+        fun headroomPx(density: Float, ghostPx: Int): Int =
+            maxOf(ghostPx * BUBBLE_HEADROOM, 30f * density).toInt()
     }
 
     /** How solid the body is. Low enough to read as a ghost, high enough to see on a busy screen. */
@@ -85,6 +106,9 @@ class GhostView(context: Context) : View(context) {
      *  through software rendering every frame, which is far too expensive to run all day. Two
      *  versions — calm blue, angry red — swapped by mood rather than rebuilt every frame. */
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** The dark-on-pale (or pale-on-dark) halo that keeps him visible on any wallpaper. */
+    private val contrastHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val angryGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     // Petting: a small hand that strokes the head for a couple of seconds.
@@ -185,6 +209,26 @@ class GhostView(context: Context) : View(context) {
     private var eatingEndsAt = 0f
     private var nextEatingHeartAt = 0f
 
+    /**
+     * The width of his body square. The view is allowed to be wider than that — its owner gives it
+     * [BUBBLE_SIDE_DP] on each side so a speech bubble is never clipped — and he stays centred in
+     * it. Left at 0 the body simply fills the view's width, which is what the in-app previews want.
+     */
+    private var bodySizePx = 0
+
+    /** Reused by the bubble's edge clamp so a visible bubble allocates nothing per frame. */
+    private val locOnScreen = IntArray(2)
+    private val visibleRect = android.graphics.Rect()
+
+    fun setBodySize(px: Int) {
+        if (px == bodySizePx) return
+        bodySizePx = px
+        rebuildGlowShaders()
+        invalidate()
+    }
+
+    private fun bodyW(): Int = if (bodySizePx in 1 until width) bodySizePx else width
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         // Glow and outline scale with the body so neither swamps a small ghost.
@@ -195,7 +239,7 @@ class GhostView(context: Context) : View(context) {
         whiskerPaint.strokeWidth = w * 0.012f
         zzzPaint.textSize = w * 0.16f
         angryBrowPaint.strokeWidth = w * 0.032f
-        bubbleTextPaint.textSize = w * 0.17f
+        bubbleTextPaint.textSize = BUBBLE_TEXT_DP * density
     }
 
     /** Re-hues a base ARGB colour to the current tint, keeping its own alpha/saturation/value — an
@@ -210,14 +254,25 @@ class GhostView(context: Context) : View(context) {
 
     /** The glow depends on both size and tint, so both paths funnel through here. */
     private fun rebuildGlowShaders() {
-        val w = width
+        val w = bodyW()
         val h = height
         if (w <= 0 || h <= 0) return
+        val cxv = width / 2f
         // Centred on his body, not on the view: the view carries bubble headroom above him.
         val glowCy = (h - w).coerceAtLeast(0) + w * 0.46f
+        // A pale ghost vanishes on a white wallpaper and a dark one vanishes on a black desk, so he
+        // carries the opposite of himself as a soft halo. On a background where it is not needed it
+        // simply cannot be seen.
+        val haloRgb = (if (shade == Shade.INK) 0xFFFFFF else 0x000000)
+        contrastHaloPaint.shader = RadialGradient(
+            cxv, glowCy, w * 0.62f,
+            intArrayOf((0x00 shl 24) or haloRgb, (0x2E shl 24) or haloRgb, (0x00 shl 24) or haloRgb),
+            floatArrayOf(0.30f, 0.62f, 1f),
+            Shader.TileMode.CLAMP
+        )
         val glowRgb = rehued(Color.parseColor("#67E8FF")) and 0x00FFFFFF
         glowPaint.shader = RadialGradient(
-            w / 2f, glowCy, w * 0.52f,
+            cxv, glowCy, w * 0.52f,
             intArrayOf(
                 (0x55 shl 24) or glowRgb,
                 (0x28 shl 24) or glowRgb,
@@ -244,6 +299,7 @@ class GhostView(context: Context) : View(context) {
         if (this.shade == shade) return
         this.shade = shade
         applyTint()
+        rebuildGlowShaders()
     }
 
     /** Recolours body, outline and glow to [tintHue] and [shade], keeping each paint's weight. */
@@ -405,8 +461,12 @@ class GhostView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
+        // He is drawn in his own square; the view around it may be wider, and that side room is
+        // what the bubble spills into.
+        val vw = width.toFloat()
+        val w = bodyW().toFloat()
         val h = height.toFloat()
+        val sideInset = (vw - w) / 2f
         if (w <= 0f || h <= 0f) return
 
         val speed = hypot(velX, velY)
@@ -430,7 +490,7 @@ class GhostView(context: Context) : View(context) {
         val stretch = min(0.14f, speed / 4200f)
 
         canvas.save()
-        canvas.translate(moodyShake, bob)
+        canvas.translate(moodyShake + sideInset, bob)
         canvas.rotate(sway + lean * 26f, w / 2f, h - w * 0.25f)
         canvas.scale((1f - stretch) * breath * puffScale, (1f + stretch) * breath * puffScale, w / 2f, h)
 
@@ -472,6 +532,7 @@ class GhostView(context: Context) : View(context) {
         bodyPath.close()
 
         val angry = !asleep && mood == Mood.ANGRY
+        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.62f, contrastHaloPaint)
         canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
         // Ears are drawn before the body: whatever falls inside the dome gets painted over, leaving
         // only the tip poking out — which is what makes them read as attached to the head.
@@ -632,7 +693,7 @@ class GhostView(context: Context) : View(context) {
         if (!asleep && startle > 0.35f) drawSpookEffects(canvas, cx, top, r, gw)
         if (petting) drawPettingHand(canvas, cx, top, r, gw)
         if (hearts.isNotEmpty()) drawHearts(canvas, w, cx, top, gw)
-        if (bubbleText != null) drawBubble(canvas, w, h, cx, top, gw)
+        if (bubbleText != null) drawBubble(canvas, vw, cx, top, gw, -sideInset)
 
         canvas.restore()
     }
@@ -733,22 +794,53 @@ class GhostView(context: Context) : View(context) {
     /** A little speech bubble with a tail pointing back down toward him — see [showBubble]. His
      *  view is cropped tight around his silhouette, so the bubble is clamped to stay inside it
      *  rather than drawn wherever looks nicest and risk being clipped off entirely. */
-    private fun drawBubble(canvas: Canvas, viewW: Float, viewH: Float, cx: Float, top: Float, gw: Float) {
-        val text = bubbleText ?: return
-        val padX = gw * 0.11f
-        val padY = gw * 0.075f
-        val bw = (bubbleTextPaint.measureText(text) + padX * 2f).coerceAtMost(viewW - 4f)
+    private fun drawBubble(canvas: Canvas, viewW: Float, cx: Float, top: Float, gw: Float, originX: Float) {
+        val raw = bubbleText ?: return
+        val padX = BUBBLE_PAD_X_DP * density
+        val padY = BUBBLE_PAD_Y_DP * density
+        // The bubble is a fixed size at every ghost size, so on a small ghost it is wider than he
+        // is: it is laid out across the whole view, side room included, and only a vocal longer
+        // than that gets shortened rather than sliced off at the edge.
+        val maxW = viewW - 4f
+        var text = raw
+        if (bubbleTextPaint.measureText(text) + padX * 2f > maxW) {
+            while (text.length > 1 && bubbleTextPaint.measureText("$text…") + padX * 2f > maxW) {
+                text = text.dropLast(1)
+            }
+            text = "$text…"
+        }
+        val bw = bubbleTextPaint.measureText(text) + padX * 2f
         val bh = bubbleTextPaint.textSize + padY * 2f
         // Above the crown, not on it: the tail hangs down toward his head and the whole bubble
         // lives in the strip the view reserves at the top (BUBBLE_HEADROOM).
-        val bcx = (cx + gw * 0.16f).coerceIn(bw / 2f + 2f, viewW - bw / 2f - 2f)
+        // Two clamps. Inside the view first, so the bubble keeps its side room; then against the
+        // display, because near a screen edge the view itself hangs off it — the window is wider
+        // than he is — and a bubble that only respected the view would be sliced off by the screen.
+        var bcx = (cx + gw * 0.16f).coerceIn(originX + bw / 2f + 2f, originX + viewW - bw / 2f - 2f)
+        getLocationOnScreen(locOnScreen)
+        val sideInsetLocal = -originX
+        // Whatever of the view is actually on show: off the side of the display for the floating
+        // ghost, or the card he lives in inside the app. Both cut a bubble the same way.
+        val edgeLeft: Float
+        val edgeRight: Float
+        if (getGlobalVisibleRect(visibleRect) && visibleRect.width() > 0) {
+            edgeLeft = visibleRect.left.toFloat()
+            edgeRight = visibleRect.right.toFloat()
+        } else {
+            edgeLeft = 0f
+            edgeRight = resources.displayMetrics.widthPixels.toFloat()
+        }
+        val lo = edgeLeft + 2f - locOnScreen[0] - sideInsetLocal + bw / 2f
+        val hi = edgeRight - 2f - locOnScreen[0] - sideInsetLocal - bw / 2f
+        if (hi > lo) bcx = bcx.coerceIn(lo, hi)
         val bcy = (top - bh * 0.62f).coerceAtLeast(bh / 2f + 1f)
         rect.set(bcx - bw / 2f, bcy - bh / 2f, bcx + bw / 2f, bcy + bh / 2f)
         canvas.drawRoundRect(rect, bh * 0.42f, bh * 0.42f, bubbleBgPaint)
         earPath.reset()
-        earPath.moveTo(bcx - gw * 0.075f, bcy + bh / 2f - 1f)
-        earPath.lineTo(bcx - gw * 0.135f, bcy + bh / 2f + gw * 0.115f)
-        earPath.lineTo(bcx + gw * 0.015f, bcy + bh / 2f - 1f)
+        val tail = 7f * density
+        earPath.moveTo(bcx - tail * 0.7f, bcy + bh / 2f - 1f)
+        earPath.lineTo(bcx - tail * 1.3f, bcy + bh / 2f + tail)
+        earPath.lineTo(bcx + tail * 0.2f, bcy + bh / 2f - 1f)
         earPath.close()
         canvas.drawPath(earPath, bubbleBgPaint)
         canvas.drawText(text, bcx, bcy + bubbleTextPaint.textSize * 0.32f, bubbleTextPaint)

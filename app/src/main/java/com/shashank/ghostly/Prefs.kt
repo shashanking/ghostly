@@ -54,7 +54,7 @@ object Prefs {
     const val SIZE_DEFAULT = 36
 
     /** The three sizes he comes in, as named options rather than a slider. */
-    const val SIZE_WISP = 24
+    const val SIZE_WISP = 30
     const val SIZE_SPOOK = 36
     const val SIZE_HAUNT = 52
 
@@ -80,11 +80,11 @@ object Prefs {
     val SIZES = listOf(SIZE_WISP, SIZE_SPOOK, SIZE_HAUNT)
 
     fun sizeDp(context: Context): Int {
-        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT).coerceIn(SIZE_MIN, SIZE_MAX)
-        // Size is a choice of three now, not a slider. Anything stored by an older build — or by
-        // the slider that used to be here — snaps to the nearest of them, so the picker always has
-        // something selected and he never changes size behind the user's back by more than a few dp.
-        return SIZES.minByOrNull { kotlin.math.abs(it - stored) } ?: SIZE_DEFAULT
+        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT)
+        // Size is a choice of three now, not a slider. A value that is not one of them came from
+        // the slider this replaced, so it is treated as never having been chosen: everyone starts
+        // at Spook, and the picker always has exactly one option lit.
+        return if (stored in SIZES) stored else SIZE_DEFAULT
     }
 
     fun setSizeDp(context: Context, value: Int) =
