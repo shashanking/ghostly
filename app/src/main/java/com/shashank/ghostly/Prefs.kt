@@ -30,6 +30,9 @@ object Prefs {
     private const val KEY_STREAK_DAY = "streak_day"
     private const val KEY_LAST_OPENED_AT = "last_opened_at"
     private const val KEY_NAME = "name"
+    private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
+    private const val KEY_USER_EMAIL = "user_email"
+    private const val KEY_USER_DISPLAY_NAME = "user_display_name"
 
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
@@ -145,6 +148,24 @@ object Prefs {
             .putFloat(KEY_HAPPINESS, happiness)
             .putBoolean(KEY_SLEEPING, sleeping)
             .putLong(KEY_STATS_AT, at)
+            .apply()
+    }
+
+    fun onboardingComplete(context: Context) = prefs(context).getBoolean(KEY_ONBOARDING_COMPLETE, false)
+
+    fun setOnboardingComplete(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(KEY_ONBOARDING_COMPLETE, value).apply()
+
+    /** Null until the user signs in (or if they skip it — sign-in was never required to use the
+     *  pet itself, only asked for once during onboarding). */
+    fun userEmail(context: Context): String? = prefs(context).getString(KEY_USER_EMAIL, null)
+
+    fun userDisplayName(context: Context): String? = prefs(context).getString(KEY_USER_DISPLAY_NAME, null)
+
+    fun saveSignedInUser(context: Context, email: String?, displayName: String?) {
+        prefs(context).edit()
+            .putString(KEY_USER_EMAIL, email)
+            .putString(KEY_USER_DISPLAY_NAME, displayName)
             .apply()
     }
 }

@@ -59,4 +59,14 @@ android {
     }
 }
 
-dependencies { }
+dependencies {
+    // Google Sign-In (Credential Manager, Google's current recommended API) is the one deliberate
+    // exception to this app's zero-dependency policy — there's no platform SDK path to it.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    // Credential Manager's getCredential() is a suspend function; MainActivity/OnboardingActivity
+    // are plain Activities (not ComponentActivity), so lifecycleScope isn't available — a small
+    // manually-managed CoroutineScope needs this instead.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+}
