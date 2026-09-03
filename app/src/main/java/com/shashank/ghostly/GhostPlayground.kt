@@ -77,6 +77,17 @@ class GhostPlayground @JvmOverloads constructor(
         color = Color.parseColor("#66C9A227")
     }
 
+    // Feeding: a treat drops from a corner, he sprints to it, then eats — started from Feed/Treat.
+    private var feedState = FeedState.NONE
+    private var treatX = 0f
+    private var treatY = 0f
+    private var treatVelY = 0f
+    private var treatLandY = 0f
+    private var eatEndsAt = 0f
+    private val treatDrawable = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
+
+    private enum class FeedState { NONE, FALLING, CHASING, EATING }
+
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             // `isAttachedToWindow` stays true once the app is in the background, so on its own it
@@ -121,6 +132,19 @@ class GhostPlayground @JvmOverloads constructor(
         toyY = margin + Random.nextFloat() * (height - margin * 2f).coerceAtLeast(1f)
         fetching = true
         fetchEndsAt = clock + FETCH_TIMEOUT_SECONDS
+        ghost.notice()
+    }
+
+    /** Drops a treat from a corner for him to sprint after and eat — called on Feed/Treat. Purely
+     *  a visual flourish; the actual stat effects are already applied by the time this runs. */
+    fun startFeeding() {
+        if (!placed || width <= 0 || height <= 0) return
+        val margin = size * 0.4f
+        treatX = if (Random.nextBoolean()) margin else width - margin
+        treatY = -size * 0.3f
+        treatVelY = 0f
+        treatLandY = height * (0.55f + Random.nextFloat() * 0.15f)
+        feedState = FeedState.FALLING
         ghost.notice()
     }
 
@@ -238,6 +262,11 @@ class GhostPlayground @JvmOverloads constructor(
             canvas.drawCircle(toyX, toyY, r, toyPaint)
             canvas.drawCircle(toyX, toyY, r, toyRimPaint)
         }
+        if (feedState == FeedState.FALLING || feedState == FeedState.CHASING) {
+            val r = (size * 0.18f).toInt()
+            treatDrawable.setBounds((treatX - r).toInt(), (treatY - r).toInt(), (treatX + r).toInt(), (treatY + r).toInt())
+            treatDrawable.draw(canvas)
+        }
         canvas.drawText("tap to spook him, hold to pet him", width / 2f, height - 18f * density, hintPaint)
     }
 
@@ -260,6 +289,11 @@ class GhostPlayground @JvmOverloads constructor(
 
     private fun tick(dt: Float) {
         if (!placed) return
+
+        if (feedState != FeedState.NONE) {
+            tickFeeding(dt)
+            return
+        }
 
         if (fetching) {
             tickFetch(dt)
@@ -308,6 +342,7 @@ class GhostPlayground @JvmOverloads constructor(
             if (caught) ghost.spook() // a happy little bounce for the catch
             ghost.advance(dt)
             ghost.invalidate()
+            invalidate() // the toy itself is drawn by this view, not the ghost — it needs its own redraw
             return
         }
 
@@ -327,7 +362,63 @@ class GhostPlayground @JvmOverloads constructor(
         ghost.lookAt(dx / dist, dy / dist)
         ghost.advance(dt)
         ghost.invalidate()
+        invalidate() // the toy itself is drawn by this view, not the ghost — it needs its own redraw
         apply()
+    }
+
+    /** Falls to a landing spot, then he sprints over and eats — see [startFeeding]. */
+    private fun tickFeeding(dt: Float) {
+        when (feedState) {
+            FeedState.FALLING -> {
+                treatVelY += GRAVITY * density * dt
+                treatY += treatVelY * dt
+                if (treatY >= treatLandY) {
+                    treatY = treatLandY
+                    feedState = FeedState.CHASING
+                }
+                ghost.advance(dt)
+                ghost.invalidate()
+                invalidate() // the treat itself is drawn by this view, not the ghost
+            }
+            FeedState.CHASING -> {
+                val cx = posX + size / 2f
+                val cy = posY + size / 2f
+                val dx = treatX - cx
+                val dy = treatY - cy
+                val dist = hypot(dx, dy)
+                if (dist < size * 0.5f) {
+                    feedState = FeedState.EATING
+                    eatEndsAt = clock + EAT_DURATION
+                    velX = 0f
+                    velY = 0f
+                    ghost.setMotion(0f, 0f)
+                    ghost.startEating(EAT_DURATION)
+                    invalidate() // treat is gone now — clear its last drawn position
+                } else {
+                    val sprintSpeed = driftSpeed * 9f
+                    val settle = 1f - exp(-3f * dt)
+                    velX += (dx / dist * sprintSpeed - velX) * settle
+                    velY += (dy / dist * sprintSpeed - velY) * settle
+                    posX += velX * dt
+                    posY += velY * dt
+                    val maxX = (width - size).toFloat()
+                    val maxY = (height - size).toFloat()
+                    posX = posX.coerceIn(0f, maxX)
+                    posY = posY.coerceIn(0f, maxY)
+                    ghost.setMotion(velX, velY)
+                    ghost.lookAt(dx / dist, dy / dist)
+                    apply()
+                }
+                ghost.advance(dt)
+                ghost.invalidate()
+            }
+            FeedState.EATING -> {
+                if (clock > eatEndsAt) feedState = FeedState.NONE
+                ghost.advance(dt)
+                ghost.invalidate()
+            }
+            FeedState.NONE -> Unit
+        }
     }
 
     private fun bounceX() {
@@ -351,5 +442,7 @@ class GhostPlayground @JvmOverloads constructor(
         const val PET_HOLD_MS = 1_000L
         const val PET_ANIMATION_MS = 2_000L
         const val FETCH_TIMEOUT_SECONDS = 6f
+        const val GRAVITY = 900f
+        const val EAT_DURATION = 1.6f
     }
 }

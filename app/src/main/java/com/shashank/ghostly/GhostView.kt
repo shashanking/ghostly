@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
@@ -163,6 +164,12 @@ class GhostView(context: Context) : View(context) {
     private var bubbleText: String? = null
     private var bubbleEndsAt = 0f
 
+    // Eating: mouth chomps rapidly and he dips toward the food, sending up little hearts as he
+    // goes — see startEating.
+    private var eating = false
+    private var eatingEndsAt = 0f
+    private var nextEatingHeartAt = 0f
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         // Glow and outline scale with the body so neither swamps a small ghost.
@@ -294,6 +301,17 @@ class GhostView(context: Context) : View(context) {
         wiggleUntil = phase + 1.2f
     }
 
+    /** Chomps happily in place for [durationSeconds], dipping toward the food and sending up
+     *  little hearts as he eats — the owner is expected to hold him still for this long. */
+    fun startEating(durationSeconds: Float = 1.6f) {
+        eating = true
+        eatingEndsAt = phase + durationSeconds
+        nextEatingHeartAt = phase
+    }
+
+    /** True while an eating animation is still playing. */
+    fun isEating(): Boolean = eating
+
     /** A small bump — used when the ghost hits the edge of the screen. */
     fun spookLightly() {
         startle = maxOf(startle, 0.45f)
@@ -338,6 +356,14 @@ class GhostView(context: Context) : View(context) {
 
         if (petting && phase > pettingEndsAt) petting = false
         if (bubbleText != null && phase > bubbleEndsAt) bubbleText = null
+        if (eating) {
+            if (phase > eatingEndsAt) {
+                eating = false
+            } else if (phase > nextEatingHeartAt) {
+                nextEatingHeartAt = phase + 0.45f
+                spawnHeart()
+            }
+        }
         hearts.removeAll { phase - it.born > 1.3f }
         // Eases toward the target rather than snapping, so a puff grows/settles instead of popping.
         puffAmount += (puffTarget - puffAmount) * (1f - kotlin.math.exp(-4f * dt))
@@ -352,7 +378,10 @@ class GhostView(context: Context) : View(context) {
         val fast = min(1f, speed / 420f)
 
         // Always-on idle motion: a bob, a slow sway, and a breath.
-        val bob = sin(phase * 2.4f) * h * 0.035f
+        // While eating, a quick little dip toward the food rides on top of the usual bob, timed
+        // with the chomp below.
+        val eatingDip = if (eating && !asleep) (0.5f - 0.5f * cos(phase * 16f)) * h * 0.05f else 0f
+        val bob = sin(phase * 2.4f) * h * 0.035f + eatingDip
         // A happy little shimmy rides on top of the normal sway while it's active.
         val wiggle = if (phase < wiggleUntil) sin(phase * 16f) * 7f else 0f
         val sway = sin(phase * 1.35f) * 3.2f * (1f - fast) + wiggle
@@ -470,7 +499,17 @@ class GhostView(context: Context) : View(context) {
         }
 
         val mouthY = eyeY + eyeR * 1.9f
-        if (!asleep && mood != Mood.CONTENT) {
+        if (eating && !asleep) {
+            // Chewing: mouth snaps between nearly shut and wide open, in time with the head dip.
+            val chomp = 0.5f - 0.5f * cos(phase * 16f)
+            val mouthW = gw * 0.15f
+            val mouthH = gw * (0.03f + 0.16f * chomp)
+            rect.set(
+                cx - mouthW / 2f + sx * 0.5f, mouthY - mouthH / 2f,
+                cx + mouthW / 2f + sx * 0.5f, mouthY + mouthH / 2f
+            )
+            canvas.drawOval(rect, mouthPaint)
+        } else if (!asleep && mood != Mood.CONTENT) {
             // Sad or angry: a small downward frown instead of the usual dot.
             val frownW = gw * 0.16f
             val frownH = gw * 0.09f

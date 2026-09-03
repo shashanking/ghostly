@@ -34,6 +34,7 @@ object Prefs {
     private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
     private const val KEY_USER_EMAIL = "user_email"
     private const val KEY_USER_DISPLAY_NAME = "user_display_name"
+    private const val KEY_FED_AT = "fed_at"
 
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
@@ -180,4 +181,11 @@ object Prefs {
             .putString(KEY_USER_DISPLAY_NAME, displayName)
             .apply()
     }
+
+    /** When he was last fed a treat, so the overlay (running as a separate surface) can notice a
+     *  feed from the app and play the same drop-and-eat animation. 0 means "never". */
+    fun fedAt(context: Context) = prefs(context).getLong(KEY_FED_AT, 0L)
+
+    fun markFed(context: Context) =
+        prefs(context).edit().putLong(KEY_FED_AT, System.currentTimeMillis()).apply()
 }

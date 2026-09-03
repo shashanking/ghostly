@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -24,6 +25,7 @@ import android.os.Vibrator
 import android.provider.Settings
 import android.view.Choreographer
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -63,6 +65,12 @@ class GhostOverlayService : Service() {
 
         /** At or above this, he reads as brimming with energy: quicker, puffed, a little arrogant. */
         private const val ENERGY_FULL_THRESHOLD = 90f
+
+        private const val PET_HOLD_MS = 1_000L
+        private const val PET_ANIMATION_MS = 2_000L
+        private const val DOUBLE_TAP_MS = 300L
+        private const val FEED_GRAVITY = 900f
+        private const val EAT_DURATION = 1.6f
 
         @Volatile
         var isRunning: Boolean = false
@@ -145,6 +153,21 @@ class GhostOverlayService : Service() {
     private var goofyCornerX = 0f
     private var goofyCornerY = 0f
 
+    // Feeding: a small second window drops a treat from a screen corner; he sprints over and
+    // eats it. Triggered by the app writing a fresh Prefs.fedAt() timestamp.
+    private var feedState = FeedState.NONE
+    private var treatRoot: View? = null
+    private var treatParams: WindowManager.LayoutParams? = null
+    private var treatPx = 0
+    private var treatX = 0f
+    private var treatY = 0f
+    private var treatVelY = 0f
+    private var treatLandY = 0f
+    private var eatEndsAt = 0f
+    private var lastFedAt = 0L
+
+    private enum class FeedState { NONE, FALLING, CHASING, EATING }
+
     // So the notification is only rebuilt when what it would say actually changes.
     private var notifiedSleeping = false
     private var notifiedMood: Mood = Mood.CONTENT
@@ -160,6 +183,26 @@ class GhostOverlayService : Service() {
     private var lastDragY = 0f
     private var lastDragNanos = 0L
     private var touchSlop = 0
+
+    // Petting: a hold that starts and stays on him, as opposed to a quick poke or a drag past
+    // him — only reachable in solid (non-click-through) mode, where a touch's exact position is
+    // actually known. Mirrors GhostPlayground's hold/animation cadence.
+    private var pettingArmed = false
+    private var petTriggered = false
+    private var lastPetAt = 0L
+    private val petRunnable = Runnable {
+        if (!pettingArmed || dragging) return@Runnable
+        petTriggered = true
+        pet()
+    }
+
+    // Double tap: a second quick tap close to the first, within the platform's usual double-tap
+    // window, opens the app instead of fleeing. A lone tap still flees, just after that same
+    // brief window closes with no second tap to pair it with.
+    private var pendingTapRunnable: Runnable? = null
+    private var lastTapUpAt = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
 
     private var looping = false
     private var lastFrameAt = 0L
@@ -266,6 +309,7 @@ class GhostOverlayService : Service() {
         root?.let { view -> runCatching { windowManager.removeView(view) } }
         root = null
         ghost = null
+        removeTreatWindow()
         super.onDestroy()
     }
 
@@ -293,6 +337,7 @@ class GhostOverlayService : Service() {
         view.species = Prefs.species(this)
         lastTintHue = Prefs.colorHue(this)
         view.setTint(lastTintHue)
+        lastFedAt = Prefs.fedAt(this)
         ghost = view
         val container = FrameLayout(this).apply {
             addView(
@@ -387,6 +432,12 @@ class GhostOverlayService : Service() {
             lastAppliedX = params.x
             lastAppliedY = params.y
         }
+
+        val newFedAt = Prefs.fedAt(this)
+        if (newFedAt != lastFedAt) {
+            lastFedAt = newFedAt
+            triggerFeeding()
+        }
     }
 
     /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
@@ -446,13 +497,20 @@ class GhostOverlayService : Service() {
                 val cx = posX + windowPx / 2f
                 val cy = posY + windowPx / 2f
                 ghost?.lookAt((event.rawX - cx) / (windowPx / 2f), (event.rawY - cy) / (windowPx / 2f))
+                petTriggered = false
+                pettingArmed = true
+                handler.postDelayed(petRunnable, PET_HOLD_MS)
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - downRawX
                 val dy = event.rawY - downRawY
-                if (!dragging && hypot(dx, dy) > touchSlop) dragging = true
+                if (!dragging && hypot(dx, dy) > touchSlop) {
+                    dragging = true
+                    pettingArmed = false
+                    handler.removeCallbacks(petRunnable)
+                }
                 if (dragging) {
                     posX = downPosX + dx
                     posY = downPosY + dy
@@ -472,16 +530,35 @@ class GhostOverlayService : Service() {
             }
 
             MotionEvent.ACTION_UP -> {
-                val held = SystemClock.uptimeMillis() - downTime
+                handler.removeCallbacks(petRunnable)
+                pettingArmed = false
                 if (!dragging) {
-                    if (held > 550) {
-                        openApp()
+                    if (petTriggered) {
+                        // Already petted via the hold — nothing more to do on release.
                     } else if (sleeping) {
                         // Stirred, not startled: a poke while napping just wakes him.
                         wakeUp()
                     } else {
-                        // Poked on or near him: bolt away from the finger.
-                        fleeFrom(event.rawX, event.rawY)
+                        val now = SystemClock.uptimeMillis()
+                        val isSecondTap = now - lastTapUpAt < DOUBLE_TAP_MS &&
+                            hypot(event.rawX - lastTapX, event.rawY - lastTapY) < touchSlop * 3
+                        if (isSecondTap) {
+                            // Caught the pending flee from the first tap in time — open the app
+                            // instead of letting him bolt.
+                            pendingTapRunnable?.let { handler.removeCallbacks(it) }
+                            pendingTapRunnable = null
+                            lastTapUpAt = 0L
+                            openApp()
+                        } else {
+                            lastTapUpAt = now
+                            lastTapX = event.rawX
+                            lastTapY = event.rawY
+                            val fx = event.rawX
+                            val fy = event.rawY
+                            val runnable = Runnable { fleeFrom(fx, fy) }
+                            pendingTapRunnable = runnable
+                            handler.postDelayed(runnable, DOUBLE_TAP_MS)
+                        }
                     }
                 } else {
                     // Released mid-drag: keep the throw, but keep it sane.
@@ -499,6 +576,8 @@ class GhostOverlayService : Service() {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(petRunnable)
+                pettingArmed = false
                 dragging = false
                 return true
             }
@@ -509,6 +588,19 @@ class GhostOverlayService : Service() {
     // endregion
 
     // region motion
+
+    /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
+    private fun pet() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastPetAt < PET_ANIMATION_MS) return
+        lastPetAt = now
+        val s = PetStats.snapshot(this)
+        val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
+        Prefs.saveStats(this, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
+        ghost?.startPetting()
+        // Still held: keep ticking affection for as long as the finger stays put.
+        handler.postDelayed(petRunnable, PET_ANIMATION_MS)
+    }
 
     /** A poke while napping: stir awake with a small startle rather than a full bolt. */
     private fun wakeUp() {
@@ -655,6 +747,11 @@ class GhostOverlayService : Service() {
             refreshMood()
         }
 
+        if (feedState != FeedState.NONE) {
+            tickFeeding(dt)
+            return
+        }
+
         if (sleeping) {
             // Settle to a stop and stay put rather than drifting off mid-nap.
             val settle = 1f - exp(-2.5f * dt)
@@ -759,6 +856,102 @@ class GhostOverlayService : Service() {
         goofyCornerX = if (Random.nextBoolean()) minX() else maxX()
         goofyCornerY = if (Random.nextBoolean()) minY() else maxY()
         ghost?.setPuffTarget(0.32f)
+    }
+
+    /** Drops a treat window from a screen corner — see [tickFeeding] for the fall/sprint/eat. */
+    private fun triggerFeeding() {
+        if (ghost == null) return
+        if (sleeping) wakeUp()
+        removeTreatWindow()
+
+        treatPx = (28f * density).toInt()
+        val margin = treatPx * 1.5f
+        treatX = if (Random.nextBoolean()) margin else bounds.width() - margin
+        treatY = -treatPx.toFloat()
+        treatVelY = 0f
+        treatLandY = bounds.height() * (0.35f + Random.nextFloat() * 0.35f)
+        feedState = FeedState.FALLING
+
+        val view = View(this).apply {
+            background = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
+        }
+        val tParams = WindowManager.LayoutParams(
+            treatPx, treatPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            x = (treatX - treatPx / 2f).toInt()
+            y = (treatY - treatPx / 2f).toInt()
+        }
+        runCatching {
+            windowManager.addView(view, tParams)
+            treatRoot = view
+            treatParams = tParams
+        }
+    }
+
+    /** Falls to a landing spot, then he sprints over and eats — see [triggerFeeding]. */
+    private fun tickFeeding(dt: Float) {
+        val view = ghost ?: return
+        when (feedState) {
+            FeedState.FALLING -> {
+                treatVelY += FEED_GRAVITY * density * dt
+                treatY += treatVelY * dt
+                if (treatY >= treatLandY) treatY = treatLandY
+                updateTreatWindow()
+                if (treatY >= treatLandY) feedState = FeedState.CHASING
+            }
+            FeedState.CHASING -> {
+                val cx = posX + windowPx / 2f
+                val cy = posY + windowPx / 2f
+                val dx = treatX - cx
+                val dy = treatY - cy
+                val dist = hypot(dx, dy)
+                if (dist < ghostPx * 0.55f) {
+                    feedState = FeedState.EATING
+                    eatEndsAt = clock + EAT_DURATION
+                    velX = 0f
+                    velY = 0f
+                    view.setMotion(0f, 0f)
+                    view.startEating(EAT_DURATION)
+                    removeTreatWindow()
+                } else {
+                    val sprintSpeed = driftSpeed * 9f
+                    val settle = 1f - exp(-3f * dt)
+                    velX += (dx / dist * sprintSpeed - velX) * settle
+                    velY += (dy / dist * sprintSpeed - velY) * settle
+                    posX += velX * dt
+                    posY += velY * dt
+                    clampIntoBounds()
+                    view.setMotion(velX, velY)
+                    view.lookAt(dx / dist, dy / dist)
+                    applyPosition()
+                }
+            }
+            FeedState.EATING -> {
+                if (clock > eatEndsAt) feedState = FeedState.NONE
+            }
+            FeedState.NONE -> Unit
+        }
+    }
+
+    private fun updateTreatWindow() {
+        val view = treatRoot ?: return
+        val tParams = treatParams ?: return
+        tParams.x = (treatX - treatPx / 2f).toInt()
+        tParams.y = (treatY - treatPx / 2f).toInt()
+        runCatching { windowManager.updateViewLayout(view, tParams) }
+    }
+
+    private fun removeTreatWindow() {
+        treatRoot?.let { v -> runCatching { windowManager.removeView(v) } }
+        treatRoot = null
+        treatParams = null
     }
 
     private fun bounceHorizontally() {

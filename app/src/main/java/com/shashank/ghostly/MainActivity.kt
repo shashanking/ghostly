@@ -375,7 +375,9 @@ class MainActivity : Activity() {
         }
         val feed = quickActionButton("Feed", IconGlyph.HUNGER) {
             PetStats.feed(this@MainActivity)
+            Prefs.markFed(this@MainActivity)
             pulse(hungerBar)
+            playground.startFeeding()
             refreshNeeds()
         }
         actionsRow.addView(feed.root)
@@ -536,6 +538,8 @@ class MainActivity : Activity() {
         ) {
             if (Emotions.giveTreat(this@MainActivity)) {
                 pulse(treatCard)
+                Prefs.markFed(this@MainActivity)
+                playground.startFeeding()
                 refreshNeeds()
             } else {
                 toastNoTokens()
@@ -778,9 +782,9 @@ class MainActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "On: nothing he floats over is ever blocked — buttons and keyboard keys still " +
                 "work through him. He notices taps but can't tell where they landed, so he can't " +
-                "be poked precisely or dragged.\n" +
-                "Off: he's solid — tap to poke, drag to move, long-press to open this screen — but " +
-                "he swallows taps where he sits."
+                "be poked precisely, petted, or dragged.\n" +
+                "Off: he's solid — tap to poke, hold to pet, drag to move, double-tap to open " +
+                "this screen — but he swallows taps where he sits."
             setTextColor(Color.parseColor("#6F6A96"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -1140,8 +1144,8 @@ class MainActivity : Activity() {
             "He's intangible: taps go straight through to whatever is underneath. Stop him from " +
                 "his notification."
         } else {
-            "He's solid: drag him anywhere, long-press to open this screen, or use the Stop " +
-                "action in his notification."
+            "He's solid: drag him anywhere, hold still on him to pet him, double-tap him to open " +
+                "this screen, or use the Stop action in his notification."
         }
 
         val currentSize = Prefs.sizeDp(this)
