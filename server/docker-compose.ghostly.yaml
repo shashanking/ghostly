@@ -1,0 +1,59 @@
+# Ghostly backend: its own Postgres and a small API, on the shared Traefik network.
+# Nothing here touches the closdex stack.
+services:
+  ghostly-pg:
+    image: postgres:16-alpine
+    container_name: ghostly-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ghostly
+      POSTGRES_USER: ghostly
+      POSTGRES_PASSWORD: ${PG_SUPER_PASSWORD}
+    volumes:
+      - ghostly-pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"   # host-local only: the editor's psql, never the internet
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghostly -d ghostly"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ghostly-api:
+    build: ./api
+    container_name: ghostly-api
+    restart: unless-stopped
+    depends_on:
+      ghostly-pg:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://ghostly_api:${API_DB_PASSWORD}@ghostly-pg:5432/ghostly
+      SESSION_SECRET: ${SESSION_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      PORT: "3000"
+    mem_limit: 192m
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.ghostly.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.ghostly-strip.stripprefix.prefixes=/ghostly"
+      - "traefik.http.middlewares.ghostly-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.ghostly-https.redirectscheme.permanent=true"
+      # https
+      - "traefik.http.routers.ghostly.rule=Host(`${DOMAIN}`) && PathPrefix(`/ghostly`)"
+      - "traefik.http.routers.ghostly.entrypoints=websecure"
+      - "traefik.http.routers.ghostly.tls=true"
+      - "traefik.http.routers.ghostly.tls.certresolver=challenger"
+      - "traefik.http.routers.ghostly.middlewares=ghostly-strip@docker"
+      # http -> https
+      - "traefik.http.routers.ghostly-web.rule=Host(`${DOMAIN}`) && PathPrefix(`/ghostly`)"
+      - "traefik.http.routers.ghostly-web.entrypoints=web"
+      - "traefik.http.routers.ghostly-web.middlewares=ghostly-https@docker"
+
+volumes:
+  ghostly-pgdata:
+
+networks:
+  default:
+    name: hostedapps_default
+    external: true

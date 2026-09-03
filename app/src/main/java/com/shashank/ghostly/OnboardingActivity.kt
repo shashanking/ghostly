@@ -328,6 +328,13 @@ class OnboardingActivity : Activity() {
                 ) {
                     val googleId = GoogleIdTokenCredential.createFrom(credential.data)
                     Prefs.saveSignedInUser(this@OnboardingActivity, googleId.id, googleId.displayName)
+                    // The token is what makes this an account rather than a name: exchange it for a
+                    // server session in the background, then let the sync layer take it from there.
+                    val idToken = googleId.idToken
+                    Thread {
+                        val ok = runCatching { GhostlyApi.authGoogle(applicationContext, idToken) }.getOrDefault(false)
+                        if (ok) ContentSync.schedule(applicationContext, forceContent = true)
+                    }.start()
                     Toast.makeText(
                         this@OnboardingActivity,
                         "Signed in as ${googleId.displayName ?: googleId.id}",

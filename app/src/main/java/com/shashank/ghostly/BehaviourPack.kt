@@ -99,10 +99,29 @@ class BehaviourPack(
     companion object {
         const val ASSET_NAME = "behaviour-pack.json"
 
-        fun load(context: Context, assetName: String = ASSET_NAME): BehaviourPack? = runCatching {
-            val json = context.assets.open(assetName).bufferedReader().use { it.readText() }
-            parse(JSONObject(json))
-        }.getOrNull()
+        /**
+         * The downloaded pack wins when it exists and parses; the bundled one is the floor the app
+         * can never fall below.
+         */
+        fun load(context: Context, assetName: String = ASSET_NAME): BehaviourPack? {
+            val downloaded = java.io.File(context.filesDir, assetName)
+            if (downloaded.isFile) {
+                runCatching { parse(JSONObject(downloaded.readText())) }
+                    .getOrNull()?.takeIf { it.reactions.isNotEmpty() }?.let { return it }
+            }
+            return runCatching {
+                val json = context.assets.open(assetName).bufferedReader().use { it.readText() }
+                parse(JSONObject(json))
+            }.getOrNull()
+        }
+
+        /** Version of whichever pack [load] would return. */
+        fun loadedVersion(context: Context): Int = runCatching {
+            val downloaded = java.io.File(context.filesDir, ASSET_NAME)
+            val text = if (downloaded.isFile) downloaded.readText()
+            else context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
+            JSONObject(text).optInt("version", 0)
+        }.getOrDefault(0)
 
         fun parse(root: JSONObject): BehaviourPack {
             val species = mutableMapOf<String, SpeciesProfile>()

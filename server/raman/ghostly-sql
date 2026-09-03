@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# psql into the Ghostly content database as the editor role.
+#   ghostly-sql                       interactive
+#   ghostly-sql -c "select count(*) from content.reactions"
+#   cat rows.sql | ghostly-sql
+set -euo pipefail
+set -a; source /opt/hostedapps/ghostly/.env; set +a
+exec docker exec -i ghostly-pg env PGPASSWORD="$RAMAN_DB_PASSWORD" psql -U raman -d ghostly "$@"

@@ -36,6 +36,13 @@ object Prefs {
     private const val KEY_USER_DISPLAY_NAME = "user_display_name"
     private const val KEY_FED_AT = "fed_at"
     private const val KEY_UNLOCKS_TODAY = "unlocks_today"
+    private const val KEY_SESSION_TOKEN = "session_token"
+    private const val KEY_USER_ID = "user_id"
+    private const val KEY_PET_SERVER_ID = "pet_server_id"
+    private const val KEY_CONTENT_VERSION = "content_version"
+    private const val KEY_CONTENT_SYNCED_AT = "content_synced_at"
+    private const val KEY_PENDING_EVENTS = "pending_events"
+    private const val KEY_DAILY = "daily"
     private const val KEY_UNLOCKS_DAY = "unlocks_day"
 
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
@@ -202,6 +209,28 @@ object Prefs {
     }
 
     private fun epochDay(): Long = System.currentTimeMillis() / 86_400_000L
+
+    // ---- server side ------------------------------------------------------------------------
+
+    fun sessionToken(context: Context): String? = prefs(context).getString(KEY_SESSION_TOKEN, null)
+    fun userId(context: Context): String? = prefs(context).getString(KEY_USER_ID, null)
+    fun saveSession(context: Context, token: String, userId: String?) =
+        prefs(context).edit().putString(KEY_SESSION_TOKEN, token).putString(KEY_USER_ID, userId).apply()
+    fun clearSession(context: Context) =
+        prefs(context).edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID).remove(KEY_PET_SERVER_ID).apply()
+
+    fun petServerId(context: Context): String? = prefs(context).getString(KEY_PET_SERVER_ID, null)
+    fun savePetServerId(context: Context, id: String) = prefs(context).edit().putString(KEY_PET_SERVER_ID, id).apply()
+
+    fun contentVersion(context: Context) = prefs(context).getInt(KEY_CONTENT_VERSION, 0)
+    fun saveContentVersion(context: Context, v: Int) = prefs(context).edit().putInt(KEY_CONTENT_VERSION, v).apply()
+    fun contentSyncedAt(context: Context) = prefs(context).getLong(KEY_CONTENT_SYNCED_AT, 0L)
+    fun saveContentSyncedAt(context: Context, at: Long) = prefs(context).edit().putLong(KEY_CONTENT_SYNCED_AT, at).apply()
+
+    fun pendingEvents(context: Context): String = prefs(context).getString(KEY_PENDING_EVENTS, "[]") ?: "[]"
+    fun savePendingEvents(context: Context, json: String) = prefs(context).edit().putString(KEY_PENDING_EVENTS, json).apply()
+    fun daily(context: Context): String = prefs(context).getString(KEY_DAILY, "{}") ?: "{}"
+    fun saveDaily(context: Context, json: String) = prefs(context).edit().putString(KEY_DAILY, json).apply()
 
     fun markFed(context: Context) =
         prefs(context).edit().putLong(KEY_FED_AT, System.currentTimeMillis()).apply()

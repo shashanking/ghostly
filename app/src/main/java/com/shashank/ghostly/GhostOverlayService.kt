@@ -59,6 +59,8 @@ class GhostOverlayService : Service() {
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
         private const val BEHAVIOUR_INTERVAL_MS = 15_000L
+        private const val SYNC_INTERVAL_MS = 10L * 60 * 1000
+        private const val FIRST_SYNC_DELAY_MS = 4_000L
         private const val MIN_FRAME_SECONDS = 1f / 30f
 
         /** Transparent ring around the ghost that still reacts to a tap, in dp. */
@@ -214,7 +216,27 @@ class GhostOverlayService : Service() {
     private var lastTapY = 0f
 
     /** The pet's brain. Content-driven; with no pack loaded it simply never proposes anything. */
-    private val behaviourEngine by lazy { BehaviourEngine.fromAssets(this) }
+    private var behaviourEngine: BehaviourEngine? = null
+    private var enginePackVersion = -1
+
+    /** Rebuilt whenever a newer pack has been downloaded since it was last built. */
+    private fun engine(): BehaviourEngine {
+        val version = BehaviourPack.loadedVersion(this)
+        val current = behaviourEngine
+        if (current != null && version == enginePackVersion) return current
+        return BehaviourEngine.fromAssets(this).also {
+            behaviourEngine = it
+            enginePackVersion = version
+        }
+    }
+
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            if (!isRunning) return
+            ContentSync.schedule(this@GhostOverlayService)
+            handler.postDelayed(this, SYNC_INTERVAL_MS)
+        }
+    }
     private var lastInteractionAt = 0L
     private var lastPetEvent: PetEvent? = null
 
@@ -426,16 +448,14 @@ class GhostOverlayService : Service() {
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
         refreshMood()
         handler.postDelayed(behaviourRunnable, BEHAVIOUR_INTERVAL_MS)
+        handler.postDelayed(syncRunnable, FIRST_SYNC_DELAY_MS)
     }
 
-    /**
-     * Ask the brain what he feels like doing. For now the decision is only reported — driving the
-     * animations from it is the next step, and belongs on the view side.
-     */
     /** Something the user did — the brain wants to know what happened last, and when. */
     private fun noteInteraction(event: PetEvent) {
         lastPetEvent = event
         lastInteractionAt = System.currentTimeMillis()
+        ContentSync.recordEvent(this, event.id)
     }
 
     /** Feeding and napping happen in the app, not on the overlay; they arrive as pref changes. */
@@ -446,10 +466,15 @@ class GhostOverlayService : Service() {
         }
     }
 
+    /**
+     * Ask the brain what he feels like doing. For now the decision is only reported — driving the
+     * animations from it is the next step, and belongs on the view side.
+     */
     private fun proposeBehaviour() {
-        if (!behaviourEngine.isLoaded) return
+        val brain = engine()
+        if (!brain.isLoaded) return
         val petContext = PetContext.of(this, lastPetEvent, lastInteractionAt)
-        val behaviour = behaviourEngine.next(petContext) ?: return
+        val behaviour = brain.next(petContext, ContentSync.dailyBoosts(this)) ?: return
         android.util.Log.i(
             "GhostBehaviour",
             "${behaviour.id} -> ${behaviour.emote}/${behaviour.locomotion} " +

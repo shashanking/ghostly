@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Validate the editable content and, if clean, snapshot it as the next active pack version.
+#   ghostly-publish --dry-run
+#   ghostly-publish --notes="added 40 monsoon reactions"
+set -euo pipefail
+set -a; source /opt/hostedapps/ghostly/.env; set +a
+exec docker exec -e DATABASE_URL="postgres://raman:${RAMAN_DB_PASSWORD}@ghostly-pg:5432/ghostly" ghostly-api node src/publish.js "$@"

@@ -26,7 +26,11 @@ class BehaviourEngine(private val pack: BehaviourPack?) {
 
     val isLoaded: Boolean get() = pack != null && pack.reactions.isNotEmpty()
 
-    fun next(context: PetContext, now: Long = System.currentTimeMillis()): Behaviour? {
+    fun next(
+        context: PetContext,
+        boosts: Map<String, Float> = emptyMap(),
+        now: Long = System.currentTimeMillis(),
+    ): Behaviour? {
         val pack = pack ?: return null
 
         val eligible = pack.reactions.filter { reaction ->
@@ -38,9 +42,11 @@ class BehaviourEngine(private val pack: BehaviourPack?) {
 
         // Anything used in the last few picks is heavily discouraged, but not banned — a small
         // chance of a repeat is better than running out of pet.
+        // Today's editor event can lean on specific reactions without a release.
         val weighted = eligible.map { reaction ->
             val penalty = if (reaction.id in recent) 0.15f else 1f
-            reaction to (reaction.weight * penalty)
+            val boost = boosts[reaction.id] ?: 1f
+            reaction to (reaction.weight * penalty * boost)
         }
         val total = weighted.sumOf { it.second.toDouble() }
         if (total <= 0.0) return null

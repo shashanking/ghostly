@@ -64,6 +64,27 @@ Each of these was measured on device and the obvious-looking change re-breaks it
 - **The 30fps cap (`MIN_FRAME_SECONDS`) is deliberate** — measured at roughly half the CPU of 45fps,
   and every frame moves a window, which is not free. Build gradients and shaders once, not per frame.
 
+## Backend (`server/`)
+
+Node/Fastify API + its own Postgres, in Docker on the Bluehost VPS behind the existing Traefik.
+Public base URL: `https://skf.npf.mybluehost.me/ghostly/v1` (`GhostlyApi.BASE_URL`).
+
+- **The VPS is read-only unless Shashank explicitly approves a specific change.** It also runs a
+  live Discord agent ("Raman", `openclaw-gateway.service`, native) and other people's services.
+- Deploy: `rsync server/ bluehost-vps:/opt/hostedapps/ghostly/ && ssh bluehost-vps /opt/hostedapps/ghostly/deploy.sh`
+  (idempotent: builds, migrates, re-applies grants). Secrets live in `/opt/hostedapps/ghostly/.env`, never in git.
+- **Never use the `closdex-pg` container** — different project. Ghostly's DB is `ghostly-pg` (host-local `127.0.0.1:5433`).
+- Two schemas, two roles: `app.*` (users/pets/state — API only) and `content.*` (reactions/species/
+  daily/settings — the editor role `raman`, who can read only anonymised `app.aggregates`).
+- Content flow: editor edits `content.reactions` → `ghostly-publish` validates and snapshots a new
+  `content.packs` version → phones download it daily; the bundled `assets/behaviour-pack.json` is the floor.
+  Editor tools on the box: `ghostly-sql`, `ghostly-seed <pack.json>`, `ghostly-publish [--dry-run]`.
+- Talk to Raman non-interactively: `openclaw agent --message-file f.md --channel discord --deliver`
+  with `PATH=/opt/openclaw/npm-global/bin:/opt/node-24/bin` and `OPENCLAW_GATEWAY_TOKEN` from the systemd unit.
+  Long generations time out the CLI at 420s — run them under `nohup` with `--timeout`.
+- Google Sign-In only works on builds whose signing SHA-1 is registered in the GCP project; our
+  debug key is `38:98:38:26:33:14:29:D8:E5:00:E6:35:F0:F2:6F:05:0F:4B:7A:CA`.
+
 ## Releasing
 
 Full Play Console process, listing copy and asset locations: @LAUNCH.md

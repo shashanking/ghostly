@@ -87,11 +87,18 @@ A short screen recording is expected with this declaration — use `play/demo/gh
 
 ### Data safety
 
-- Does your app collect or share any required user data? **No**
-- Data collected: **none**. Data shared: **none**.
-- Is all user data encrypted in transit? **N/A — no data leaves the device**
-- Do you provide a way for users to request data deletion? **N/A — no data is collected**
-- The app has no analytics, no crash reporting, no ads SDK, no network access at all.
+Sign-in is optional, so declare the data as **optional** (collected only if the user signs in).
+
+- Does your app collect or share any required user data? **Yes — collected, optional, not shared**
+- **Personal info → Email address, Name, User IDs** — collected, optional, for *App functionality* and
+  *Account management*. Not shared. User can request deletion.
+- **App activity → Other user-generated content** (pet name/appearance) and **App interactions**
+  (feed / pet / play events) — collected, optional, for *App functionality*. Not shared.
+- **Device or other IDs** — collected, optional, for *App functionality* (restore on a second device).
+- Encrypted in transit: **Yes** (HTTPS only). Deletion: **Yes** — in-app (Settings → Delete my
+  account) and via `https://shashanking.github.io/ghostly-privacy/delete-account.html`.
+- No analytics, no crash reporting, no ads SDK. Location, contacts, files, screen contents: **not collected**.
+- Account deletion URL for the Console field: `https://shashanking.github.io/ghostly-privacy/delete-account.html`
 
 ### Content rating questionnaire
 

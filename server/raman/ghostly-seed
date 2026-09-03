@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Upsert a whole pack JSON file into the editable tables (does not publish).
+#   ghostly-seed /path/to/pack.json
+set -euo pipefail
+set -a; source /opt/hostedapps/ghostly/.env; set +a
+exec docker exec -i -e DATABASE_URL="postgres://raman:${RAMAN_DB_PASSWORD}@ghostly-pg:5432/ghostly" ghostly-api node src/seed.js < "$1"

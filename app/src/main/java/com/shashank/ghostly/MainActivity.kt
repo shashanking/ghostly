@@ -833,11 +833,52 @@ class MainActivity : Activity() {
         shareRow.addView(pinBtn)
         column.addView(shareRow)
 
+        column.addView(sectionLabel("Account"))
+        val email = Prefs.userEmail(this)
+        column.addView(TextView(this).apply {
+            text = if (email != null) "Signed in as $email" else "Not signed in — the pet lives only on this phone."
+            setTextColor(Palette.dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
+        })
+        if (email != null) {
+            column.addView(settingsRowButton("Delete my account and server data", null) { confirmDeleteAccount() })
+        }
+
         column.addView(sectionLabel("Trouble"))
         column.addView(settingsRowButton("Permission blocked by Android?", null) { openAppInfo() })
 
         scroll.addView(column)
         return scroll
+    }
+
+    /**
+     * Play requires an in-app way to delete the account. The pet on this phone survives — only the
+     * server copy (account, pets, history) is removed.
+     */
+    private fun confirmDeleteAccount() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Delete your account?")
+            .setMessage(
+                "This removes your account and everything saved on the server: your pets, their " +
+                    "stats and history. The pet on this phone stays, but he'll no longer sync."
+            )
+            .setNegativeButton("Keep it", null)
+            .setPositiveButton("Delete") { _, _ ->
+                Thread {
+                    val ok = runCatching { GhostlyApi.deleteAccount(applicationContext) }.getOrDefault(false)
+                    runOnUiThread {
+                        if (ok) {
+                            Prefs.saveSignedInUser(this, null, null)
+                            Toast.makeText(this, "Account deleted", Toast.LENGTH_LONG).show()
+                            showTab(AppTab.SETTINGS)
+                        } else {
+                            Toast.makeText(this, "Couldn't reach the server — try again later", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+            }
+            .show()
     }
 
     private fun settingsRowButton(label: String, glyph: IconGlyph?, onClick: () -> Unit) =
