@@ -129,7 +129,7 @@ class GhostPlayground @JvmOverloads constructor(
         setWillNotDraw(false)
         ghost.species = Prefs.species(context)
         ghost.setTint(Prefs.colorHue(context))
-        addView(ghost, LayoutParams(size, size))
+        addView(ghost, LayoutParams(size, (size * (1f + GhostView.BUBBLE_HEADROOM)).toInt()))
     }
 
     /** Called by the settings screen when the character picker changes. */
@@ -175,6 +175,8 @@ class GhostPlayground @JvmOverloads constructor(
     /** Drops a treat from a corner for him to sprint after and eat — called on Feed/Treat. Purely
      *  a visual flourish; the actual stat effects are already applied by the time this runs. */
     fun startFeeding() {
+        ghost.showExpression(Expression.SMILE, 2.0f)
+        vocalise("hungry")
         if (!placed || width <= 0 || height <= 0) return
         val margin = size * 0.4f
         treatX = if (Random.nextBoolean()) margin else width - margin
@@ -270,6 +272,29 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
+    /** What he says, in his own species' voice. */
+    private fun vocalise(kind: String) {
+        val species = Prefs.species(context)
+        val text = when (kind) {
+            "happy" -> when (species) {
+                Species.CAT -> "Purr~"
+                Species.DOG -> "Woof!"
+                Species.GHOST -> "boo-oo"
+            }
+            "hungry" -> when (species) {
+                Species.CAT -> "Meow"
+                Species.DOG -> "Woof?"
+                Species.GHOST -> "boo?"
+            }
+            else -> when (species) {
+                Species.CAT -> "mrr"
+                Species.DOG -> "wf"
+                Species.GHOST -> "boo…"
+            }
+        }
+        ghost.showBubble(text, 1.9f)
+    }
+
     private fun pet() {
         val now = SystemClock.uptimeMillis()
         if (now - lastPetAt < PET_ANIMATION_MS) return
@@ -278,6 +303,8 @@ class GhostPlayground @JvmOverloads constructor(
         val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
         Prefs.saveStats(context, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
         ghost.startPetting()
+        ghost.showExpression(Expression.DELIGHTED, 2.4f)
+        vocalise("happy")
         // Still held: keep ticking affection for as long as the finger stays put.
         petHandler.postDelayed(petRunnable, PET_ANIMATION_MS)
     }
@@ -507,10 +534,16 @@ class GhostPlayground @JvmOverloads constructor(
         ghost.spookLightly()
     }
 
+    /**
+     * posX/posY are his BODY's top-left. The view itself is taller than his body — the extra strip
+     * is bubble headroom — so it is shifted up by that much when placed.
+     */
     private fun apply() {
         ghost.translationX = posX
-        ghost.translationY = posY
+        ghost.translationY = posY - headroom
     }
+
+    private val headroom: Float get() = size * GhostView.BUBBLE_HEADROOM
 
     private companion object {
         const val PET_HOLD_MS = 1_000L

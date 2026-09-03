@@ -120,6 +120,9 @@ class GhostOverlayService : Service() {
     private var windowPx = 0
     private var haloPx = 0
 
+    /** Space above him inside the window, so a speech bubble is never clipped. */
+    private var headroomPx = 0
+
     // What the window was last resized/retinted to, so the prefs listener only touches the
     // window when the size or colour actually changed rather than on every stat tick.
     private var lastSizeDp = -1
@@ -181,6 +184,7 @@ class GhostOverlayService : Service() {
 
     // So the notification is only rebuilt when what it would say actually changes.
     private var notifiedSleeping = false
+    private var lastExpression: Expression = Expression.NONE
     private var notifiedMood: Mood = Mood.CONTENT
 
     // Drag bookkeeping
@@ -378,6 +382,7 @@ class GhostOverlayService : Service() {
         ghostPx = (lastSizeDp * density).toInt()
         haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
         windowPx = ghostPx + haloPx * 2
+        headroomPx = (ghostPx * GhostView.BUBBLE_HEADROOM).toInt()
         driftSpeed = 18f * density
         refreshBounds()
 
@@ -390,7 +395,7 @@ class GhostOverlayService : Service() {
         val container = FrameLayout(this).apply {
             addView(
                 view,
-                FrameLayout.LayoutParams(ghostPx, ghostPx, android.view.Gravity.CENTER)
+                FrameLayout.LayoutParams(ghostPx, ghostPx + headroomPx, android.view.Gravity.CENTER)
             )
         }
         root = container
@@ -407,7 +412,7 @@ class GhostOverlayService : Service() {
 
         params = WindowManager.LayoutParams(
             windowPx,
-            windowPx,
+            windowPx + headroomPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT
@@ -509,12 +514,13 @@ class GhostOverlayService : Service() {
             posY -= delta
             ghostPx = newGhostPx
             windowPx = newWindowPx
+            headroomPx = (ghostPx * GhostView.BUBBLE_HEADROOM).toInt()
             clampIntoBounds()
             params.width = windowPx
-            params.height = windowPx
+            params.height = windowPx + headroomPx
             params.x = posX.toInt()
             params.y = posY.toInt()
-            view.layoutParams = FrameLayout.LayoutParams(ghostPx, ghostPx, android.view.Gravity.CENTER)
+            view.layoutParams = FrameLayout.LayoutParams(ghostPx, ghostPx + headroomPx, android.view.Gravity.CENTER)
             runCatching { windowManager.updateViewLayout(container, params) }
             lastAppliedX = params.x
             lastAppliedY = params.y
@@ -529,12 +535,31 @@ class GhostOverlayService : Service() {
 
     /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
      *  notification honest about how he's doing. */
+    /**
+     * The faces that follow from the numbers: worn out enough to yawn, run right down to a swoon.
+     * Called from the same place the mood is refreshed, so it never fights it.
+     */
+    private fun expressionFor(snapshot: PetStats.Snapshot): Expression = when {
+        snapshot.sleeping -> Expression.NONE
+        snapshot.energy < 8f -> Expression.FAINT
+        snapshot.energy < 22f -> Expression.SLEEPY
+        snapshot.happiness > 92f && snapshot.hunger > 70f -> Expression.DELIGHTED
+        else -> Expression.NONE
+    }
+
     private fun refreshMood() {
         val s = Emotions.snapshot(this)
         sleeping = s.body.sleeping
         mood = s.mood
         energyFull = s.body.energy >= ENERGY_FULL_THRESHOLD
         ghost?.setMood(mood, sleeping)
+        // A face that follows from the numbers — only re-shown when it changes, so it does not
+        // restart itself every refresh.
+        val face = expressionFor(s.body)
+        if (face != lastExpression) {
+            lastExpression = face
+            if (face != Expression.NONE) ghost?.showExpression(face, 3.4f)
+        }
 
         if (sleeping != notifiedSleeping || mood != notifiedMood) {
             notifiedSleeping = sleeping
@@ -596,7 +621,7 @@ class GhostOverlayService : Service() {
                 velX = 0f
                 velY = 0f
                 val cx = posX + windowPx / 2f
-                val cy = posY + windowPx / 2f
+                val cy = posY + headroomPx + windowPx / 2f
                 ghost?.lookAt((event.rawX - cx) / (windowPx / 2f), (event.rawY - cy) / (windowPx / 2f))
                 petTriggered = false
                 pettingArmed = true
@@ -717,7 +742,7 @@ class GhostOverlayService : Service() {
     private fun fleeFrom(fromX: Float, fromY: Float) {
         noteInteraction(PetEvent.SPOOKED)
         val cx = posX + windowPx / 2f
-        val cy = posY + windowPx / 2f
+        val cy = posY + headroomPx + windowPx / 2f
         var dx = cx - fromX
         var dy = cy - fromY
         val len = hypot(dx, dy)
@@ -800,7 +825,7 @@ class GhostOverlayService : Service() {
     /** A heading that generally points back into the middle of the screen, plus a wide spread. */
     private fun angleTowardsOpenSpace(): Float {
         val cx = posX + windowPx / 2f
-        val cy = posY + windowPx / 2f
+        val cy = posY + headroomPx + windowPx / 2f
         val toCentre = atan2(bounds.height() / 2f - cy, bounds.width() / 2f - cx)
         return toCentre + (Random.nextFloat() - 0.5f) * 3.0f
     }
@@ -831,7 +856,7 @@ class GhostOverlayService : Service() {
         }
 
         val cx = posX + windowPx / 2f
-        val cy = posY + windowPx / 2f
+        val cy = posY + headroomPx + windowPx / 2f
         val dx = gazeScreenX - cx
         val dy = gazeScreenY - cy
         val len = hypot(dx, dy)
@@ -1011,7 +1036,7 @@ class GhostOverlayService : Service() {
             }
             FeedState.CHASING -> {
                 val cx = posX + windowPx / 2f
-                val cy = posY + windowPx / 2f
+                val cy = posY + headroomPx + windowPx / 2f
                 val dx = treatX - cx
                 val dy = treatY - cy
                 val dist = hypot(dx, dy)
@@ -1076,7 +1101,9 @@ class GhostOverlayService : Service() {
 
     private fun minX() = usable.left - haloPx - overhang()
     private fun maxX() = usable.right - windowPx + haloPx + overhang()
-    private fun minY() = usable.top - haloPx - overhang()
+    // His body starts headroomPx below the top of the window, so the vertical bounds shift by it:
+    // he may sit at the very top of the screen with the bubble space hanging off-screen above.
+    private fun minY() = usable.top - haloPx - headroomPx - overhang()
     private fun maxY() = usable.bottom - windowPx + haloPx + overhang()
 
     private fun clampIntoBounds() {

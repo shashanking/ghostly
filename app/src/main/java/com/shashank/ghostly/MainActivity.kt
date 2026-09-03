@@ -417,7 +417,7 @@ class MainActivity : Activity() {
         column.addView(statusLabel)
 
         primaryButton = Button(this).apply {
-            setTextColor(Color.parseColor("#0B0A14"))
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = uiMedium
             isAllCaps = false
@@ -444,7 +444,7 @@ class MainActivity : Activity() {
      */
     private fun buildBlockedCard(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = rounded(Color.parseColor("#1D1A33"), dp(18).toFloat(), Color.parseColor("#3A3363"))
+        background = rounded(Palette.glass, dp(18).toFloat(), Palette.glassStroke)
         setPadding(dp(16), dp(16), dp(16), dp(16))
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             .apply { topMargin = dp(12) }
@@ -512,7 +512,7 @@ class MainActivity : Activity() {
         val tokensCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            background = gradientRounded(Color.parseColor("#241F45"), Color.parseColor("#16142B"), dp(22).toFloat())
+            background = gradientRounded(Palette.badge, Palette.card, dp(22).toFloat())
             elevation = dp(3).toFloat()
             setPadding(dp(16), dp(20), dp(16), dp(20))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
@@ -569,7 +569,7 @@ class MainActivity : Activity() {
         column.addView(TextView(this).apply {
             text = "Tokens reset to ${Emotions.DAILY_TOKENS} every day — they don't carry over, so " +
                 "there's no reason to hoard them."
-            setTextColor(Color.parseColor("#6F6A96"))
+            setTextColor(Palette.textFaint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setLineSpacing(dp(3).toFloat(), 1f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(16) }
@@ -596,7 +596,7 @@ class MainActivity : Activity() {
         }
 
         val badge = FrameLayout(this).apply {
-            background = rounded(Color.parseColor("#241F45"), dp(14).toFloat())
+            background = rounded(Palette.badge, dp(14).toFloat())
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         }
         badge.addView(iconView(glyph, mint, 24).apply {
@@ -630,7 +630,7 @@ class MainActivity : Activity() {
             text = buttonLabel
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.parseColor("#0B0A14"))
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             background = rounded(mint, dp(14).toFloat())
             layoutParams = LinearLayout.LayoutParams(dp(94), dp(44))
@@ -787,7 +787,7 @@ class MainActivity : Activity() {
                 "be poked precisely, petted, or dragged.\n" +
                 "Off: he's solid — tap to poke, hold to pet, drag to move, double-tap to open " +
                 "this screen — but he swallows taps where he sits."
-            setTextColor(Color.parseColor("#6F6A96"))
+            setTextColor(Palette.textFaint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setLineSpacing(dp(3).toFloat(), 1f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }

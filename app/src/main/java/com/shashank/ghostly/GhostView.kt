@@ -28,6 +28,14 @@ import kotlin.math.sin
  */
 class GhostView(context: Context) : View(context) {
 
+    companion object {
+        /**
+         * Extra height above the body, as a fraction of his width, so a speech bubble has somewhere
+         * to be. Whoever sizes a GhostView should make it `width * (1 + BUBBLE_HEADROOM)` tall.
+         */
+        const val BUBBLE_HEADROOM = 0.46f
+    }
+
     /** How solid the body is. Low enough to read as a ghost, high enough to see on a busy screen. */
     private val bodyAlpha = 188
 
@@ -40,7 +48,7 @@ class GhostView(context: Context) : View(context) {
     /** A see-through body disappears on a white screen; the outline keeps his shape readable. */
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.parseColor("#8C6C63C9")
+        color = Color.parseColor("#8CFFFFFF")
     }
     private val scleraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F5EDEFFF") }
     private val scleraRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -143,6 +151,13 @@ class GhostView(context: Context) : View(context) {
     /** How he's currently feeling — drives droopy eyes, a frown, furrowed brows, a red glow. */
     private var mood: Mood = Mood.CONTENT
 
+    /**
+     * A momentary face that overrides the mood one — a grin after a treat, a yawn before a nap, a
+     * baffled look, a swoon. It expires on its own, so callers never have to clear it.
+     */
+    private var expression: Expression = Expression.NONE
+    private var expressionEndsAt = 0f
+
     /** Set by the owner: settled down for a nap — eyes shut, no idle glancing. */
     private var asleep = false
 
@@ -180,7 +195,7 @@ class GhostView(context: Context) : View(context) {
         whiskerPaint.strokeWidth = w * 0.012f
         zzzPaint.textSize = w * 0.16f
         angryBrowPaint.strokeWidth = w * 0.032f
-        bubbleTextPaint.textSize = w * 0.13f
+        bubbleTextPaint.textSize = w * 0.17f
     }
 
     /** Re-hues a base ARGB colour to the current tint, keeping its own alpha/saturation/value — an
@@ -198,9 +213,11 @@ class GhostView(context: Context) : View(context) {
         val w = width
         val h = height
         if (w <= 0 || h <= 0) return
+        // Centred on his body, not on the view: the view carries bubble headroom above him.
+        val glowCy = (h - w).coerceAtLeast(0) + w * 0.46f
         val glowRgb = rehued(Color.parseColor("#67E8FF")) and 0x00FFFFFF
         glowPaint.shader = RadialGradient(
-            w / 2f, h * 0.46f, w * 0.52f,
+            w / 2f, glowCy, w * 0.52f,
             intArrayOf(
                 (0x55 shl 24) or glowRgb,
                 (0x28 shl 24) or glowRgb,
@@ -211,7 +228,7 @@ class GhostView(context: Context) : View(context) {
         )
         // Anger's glow stays red no matter the chosen tint — it's a mood signal, not a body colour.
         angryGlowPaint.shader = RadialGradient(
-            w / 2f, h * 0.46f, w * 0.52f,
+            w / 2f, glowCy, w * 0.52f,
             intArrayOf(
                 Color.parseColor("#66FF5252"),
                 Color.parseColor("#33FF5252"),
@@ -254,6 +271,12 @@ class GhostView(context: Context) : View(context) {
     fun notice() {
         alert = 1f
         if (blinkStartedAt < 0f) nextBlinkAt = phase + 1.4f
+    }
+
+    /** A face that plays for a beat and then gives way to his mood again. */
+    fun showExpression(expression: Expression, durationSeconds: Float = 2.2f) {
+        this.expression = expression
+        expressionEndsAt = phase + durationSeconds
     }
 
     /** How he's doing right now, and whether he's napping. */
@@ -356,6 +379,7 @@ class GhostView(context: Context) : View(context) {
 
         if (petting && phase > pettingEndsAt) petting = false
         if (bubbleText != null && phase > bubbleEndsAt) bubbleText = null
+        if (expression != Expression.NONE && phase > expressionEndsAt) expression = Expression.NONE
         if (eating) {
             if (phase > eatingEndsAt) {
                 eating = false
@@ -396,13 +420,16 @@ class GhostView(context: Context) : View(context) {
 
         canvas.save()
         canvas.translate(moodyShake, bob)
-        canvas.rotate(sway + lean * 26f, w / 2f, h * 0.75f)
+        canvas.rotate(sway + lean * 26f, w / 2f, h - w * 0.25f)
         canvas.scale((1f - stretch) * breath * puffScale, (1f + stretch) * breath * puffScale, w / 2f, h)
 
+        // He is drawn in the bottom square of the view; any extra height above it is headroom for
+        // the speech bubble, so a bubble never has to be squashed onto his crown.
+        val bodyTop = (h - w).coerceAtLeast(0f)
         val pad = w * 0.10f
         val left = pad
         val right = w - pad
-        val top = pad
+        val top = bodyTop + pad
         val bottom = h - pad
         val gw = right - left
         val r = gw / 2f
@@ -434,7 +461,7 @@ class GhostView(context: Context) : View(context) {
         bodyPath.close()
 
         val angry = !asleep && mood == Mood.ANGRY
-        canvas.drawCircle(w / 2f, h * 0.46f, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
+        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
         // Ears are drawn before the body: whatever falls inside the dome gets painted over, leaving
         // only the tip poking out — which is what makes them read as attached to the head.
         drawEars(canvas, cx, top, r, gw, detailed)
@@ -471,7 +498,37 @@ class GhostView(context: Context) : View(context) {
         // sleep. Anger doesn't droop them at all — furrowed brows carry that mood instead.
         val droop = if (!asleep && mood == Mood.SAD) 0.35f else 0f
 
-        if (asleep) {
+        val face = expression
+        if (face == Expression.FAINT) {
+            // Two crossed strokes per eye, and a swirl of dizziness over the crown.
+            for (side in intArrayOf(-1, 1)) {
+                val ex = cx + side * eyeDx
+                val a = eyeR * 0.62f
+                canvas.drawLine(ex - a, eyeY - a, ex + a, eyeY + a, linePaint)
+                canvas.drawLine(ex + a, eyeY - a, ex - a, eyeY + a, linePaint)
+            }
+            rect.set(cx - gw * 0.10f, top - gw * 0.02f, cx + gw * 0.10f, top + gw * 0.18f)
+            canvas.drawArc(rect, 40f, 300f, false, linePaint)
+        } else if (face == Expression.DELIGHTED) {
+            // Eyes squeezed shut with pleasure — arcs bowing up, the inverse of the sleeping ones.
+            for (side in intArrayOf(-1, 1)) {
+                val ex = cx + side * eyeDx
+                rect.set(ex - eyeR * 0.85f, eyeY - eyeR * 0.45f, ex + eyeR * 0.85f, eyeY + eyeR * 0.75f)
+                canvas.drawArc(rect, 200f, 140f, false, linePaint)
+            }
+        } else if (face == Expression.SLEEPY) {
+            // Heavy lids: the open eye, squashed, with a lid drawn across the top.
+            for (side in intArrayOf(-1, 1)) {
+                val ex = cx + side * eyeDx
+                canvas.save()
+                canvas.scale(1f, 0.45f, ex, eyeY)
+                canvas.drawCircle(ex, eyeY, eyeR, scleraPaint)
+                canvas.drawCircle(ex + sx, eyeY + sy - eyeR * 0.1f, pupilR, pupilPaint)
+                canvas.restore()
+                rect.set(ex - eyeR, eyeY - eyeR * 0.75f, ex + eyeR, eyeY + eyeR * 0.25f)
+                canvas.drawArc(rect, 200f, 140f, false, linePaint)
+            }
+        } else if (asleep) {
             for (side in intArrayOf(-1, 1)) {
                 val ex = cx + side * eyeDx
                 rect.set(ex - eyeR, eyeY - eyeR * 0.55f, ex + eyeR, eyeY + eyeR * 0.55f)
@@ -496,10 +553,27 @@ class GhostView(context: Context) : View(context) {
                 canvas.restore()
             }
             if (angry) drawAngryBrows(canvas, cx, eyeDx, eyeY, eyeR)
+            if (face == Expression.CONFUSED) drawConfusedBrows(canvas, cx, eyeDx, eyeY, eyeR)
         }
 
         val mouthY = eyeY + eyeR * 1.9f
-        if (eating && !asleep) {
+        if (face == Expression.SMILE || face == Expression.DELIGHTED) {
+            // A grin is the frown's arc swept the other way, so it bows down in the middle.
+            val w2 = gw * (if (face == Expression.DELIGHTED) 0.22f else 0.19f)
+            val h2 = gw * 0.11f
+            rect.set(cx - w2 / 2f + sx * 0.5f, mouthY - h2 * 0.7f, cx + w2 / 2f + sx * 0.5f, mouthY + h2)
+            canvas.drawArc(rect, 0f, 180f, false, linePaint)
+        } else if (face == Expression.SLEEPY) {
+            val w2 = gw * 0.13f
+            val h2 = gw * 0.19f
+            rect.set(cx - w2 / 2f, mouthY - h2 / 2f + 2f, cx + w2 / 2f, mouthY + h2 / 2f + 2f)
+            canvas.drawOval(rect, mouthPaint)
+        } else if (face == Expression.CONFUSED || face == Expression.FAINT) {
+            val w2 = gw * 0.15f
+            canvas.drawLine(cx - w2 / 2f, mouthY, cx - w2 * 0.1f, mouthY - 3f, linePaint)
+            canvas.drawLine(cx - w2 * 0.1f, mouthY - 3f, cx + w2 * 0.2f, mouthY + 3f, linePaint)
+            canvas.drawLine(cx + w2 * 0.2f, mouthY + 3f, cx + w2 / 2f, mouthY, linePaint)
+        } else if (eating && !asleep) {
             // Chewing: mouth snaps between nearly shut and wide open, in time with the head dip.
             val chomp = 0.5f - 0.5f * cos(phase * 16f)
             val mouthW = gw * 0.15f
@@ -550,6 +624,16 @@ class GhostView(context: Context) : View(context) {
         if (bubbleText != null) drawBubble(canvas, w, h, cx, top, gw)
 
         canvas.restore()
+    }
+
+    /** One brow arched high, the other flat and low — the whole reading of confusion sits here. */
+    private fun drawConfusedBrows(canvas: Canvas, cx: Float, eyeDx: Float, eyeY: Float, eyeR: Float) {
+        val hi = eyeY - eyeR * 1.5f
+        val lo = eyeY - eyeR * 1.15f
+        val half = eyeR * 0.75f
+        rect.set(cx - eyeDx - half, hi - eyeR * 0.35f, cx - eyeDx + half, hi + eyeR * 0.35f)
+        canvas.drawArc(rect, 200f, 140f, false, angryBrowPaint)
+        canvas.drawLine(cx + eyeDx - half, lo, cx + eyeDx + half, lo + 2f, angryBrowPaint)
     }
 
     /** A furrowed "\  /" brow over both eyes — each line's inner (nose-side) end sits lower than
@@ -640,18 +724,20 @@ class GhostView(context: Context) : View(context) {
      *  rather than drawn wherever looks nicest and risk being clipped off entirely. */
     private fun drawBubble(canvas: Canvas, viewW: Float, viewH: Float, cx: Float, top: Float, gw: Float) {
         val text = bubbleText ?: return
-        val padX = gw * 0.09f
-        val padY = gw * 0.06f
+        val padX = gw * 0.11f
+        val padY = gw * 0.075f
         val bw = (bubbleTextPaint.measureText(text) + padX * 2f).coerceAtMost(viewW - 4f)
         val bh = bubbleTextPaint.textSize + padY * 2f
-        val bcx = (cx + gw * 0.4f).coerceIn(bw / 2f + 2f, viewW - bw / 2f - 2f)
-        val bcy = (top - gw * 0.05f).coerceIn(bh / 2f + 2f, viewH - bh / 2f - 2f)
+        // Above the crown, not on it: the tail hangs down toward his head and the whole bubble
+        // lives in the strip the view reserves at the top (BUBBLE_HEADROOM).
+        val bcx = (cx + gw * 0.16f).coerceIn(bw / 2f + 2f, viewW - bw / 2f - 2f)
+        val bcy = (top - bh * 0.62f).coerceAtLeast(bh / 2f + 1f)
         rect.set(bcx - bw / 2f, bcy - bh / 2f, bcx + bw / 2f, bcy + bh / 2f)
-        canvas.drawRoundRect(rect, bh * 0.4f, bh * 0.4f, bubbleBgPaint)
+        canvas.drawRoundRect(rect, bh * 0.42f, bh * 0.42f, bubbleBgPaint)
         earPath.reset()
-        earPath.moveTo(bcx - gw * 0.05f, bcy + bh / 2f - gw * 0.01f)
-        earPath.lineTo(bcx - gw * 0.11f, bcy + bh / 2f + gw * 0.08f)
-        earPath.lineTo(bcx + gw * 0.02f, bcy + bh / 2f - gw * 0.01f)
+        earPath.moveTo(bcx - gw * 0.075f, bcy + bh / 2f - 1f)
+        earPath.lineTo(bcx - gw * 0.135f, bcy + bh / 2f + gw * 0.115f)
+        earPath.lineTo(bcx + gw * 0.015f, bcy + bh / 2f - 1f)
         earPath.close()
         canvas.drawPath(earPath, bubbleBgPaint)
         canvas.drawText(text, bcx, bcy + bubbleTextPaint.textSize * 0.32f, bubbleTextPaint)
@@ -665,7 +751,7 @@ class GhostView(context: Context) : View(context) {
         when (species) {
             Species.GHOST -> return
             Species.CAT -> {
-                val earHeight = gw * 0.30f
+                val earHeight = gw * 0.275f
                 val earHalfBase = gw * 0.13f
                 for (side in intArrayOf(-1, 1)) {
                     val baseCx = cx + side * r * 0.60f
