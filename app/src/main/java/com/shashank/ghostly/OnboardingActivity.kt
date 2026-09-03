@@ -696,7 +696,7 @@ class OnboardingActivity : Activity() {
 
     // endregion
 
-    private companion object {
+    companion object {
         // Web-application OAuth client from the "cvs-leadgen" Google Cloud project — used only as
         // the ID token audience (serverClientId); Play Services separately checks the Android
         // client (package name + SHA-1) to confirm the calling app is legitimate.

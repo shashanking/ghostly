@@ -153,6 +153,8 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        // Leaving the app is the other one — his stats have just been changed by hand.
+        ContentSync.schedule(this)
         primaryButton.removeCallbacks(stateWatcher)
         super.onPause()
     }
@@ -849,6 +851,16 @@ class MainActivity : Activity() {
         })
         if (email != null) {
             column.addView(settingsRowButton("Delete my account and server data", null) { confirmDeleteAccount() })
+        } else {
+            column.addView(settingsRowButton("Sign in with Google", null) { signInFromSettings() })
+            column.addView(TextView(this).apply {
+                text = "Signing in keeps your ghost if you change phone, and keeps his token " +
+                    "balance honest. He works exactly the same without it."
+                setTextColor(Palette.textFaint)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setLineSpacing(dp(3).toFloat(), 1f)
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
+            })
         }
 
         column.addView(sectionLabel("Trouble"))
@@ -856,6 +868,42 @@ class MainActivity : Activity() {
 
         scroll.addView(column)
         return scroll
+    }
+
+    /** The same Credential Manager flow onboarding uses, reachable for anyone who skipped it. */
+    private fun signInFromSettings() {
+        val option = com.google.android.libraries.identity.googleid.GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(false)
+            .setServerClientId(OnboardingActivity.GOOGLE_WEB_CLIENT_ID)
+            .build()
+        val request = androidx.credentials.GetCredentialRequest.Builder().addCredentialOption(option).build()
+        Toast.makeText(this, "Opening Google sign-in…", Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = runCatching {
+                kotlinx.coroutines.runBlocking {
+                    androidx.credentials.CredentialManager.create(this@MainActivity)
+                        .getCredential(this@MainActivity, request)
+                }
+            }
+            val credential = result.getOrNull()?.credential
+            val idToken = (credential as? androidx.credentials.CustomCredential)
+                ?.takeIf { it.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL }
+                ?.let { com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(it.data) }
+            if (idToken == null) {
+                val why = result.exceptionOrNull()?.message ?: "no Google credential offered"
+                android.util.Log.w("GhostlyAuth", "sign-in failed: $why")
+                runOnUiThread { Toast.makeText(this, "Sign-in didn't complete", Toast.LENGTH_LONG).show() }
+                return@Thread
+            }
+            Prefs.saveSignedInUser(this, idToken.id, idToken.displayName)
+            val ok = runCatching { GhostlyApi.authGoogle(applicationContext, idToken.idToken) }
+            android.util.Log.i("GhostlyAuth", "server session: ${ok.getOrNull()} ${ok.exceptionOrNull()?.message ?: ""}")
+            runOnUiThread {
+                Toast.makeText(this, if (ok.getOrDefault(false)) "Signed in" else "Signed in on device only", Toast.LENGTH_LONG).show()
+                showTab(AppTab.SETTINGS)
+            }
+            ContentSync.schedule(applicationContext, forceContent = true)
+        }.start()
     }
 
     /**

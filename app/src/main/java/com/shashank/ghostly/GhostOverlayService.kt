@@ -480,19 +480,85 @@ class GhostOverlayService : Service() {
     private fun proposeBehaviour() {
         val brain = engine()
         if (!brain.isLoaded) return
+        val view = ghost ?: return
         val petContext = PetContext.of(this, lastPetEvent, lastInteractionAt)
         val behaviour = brain.next(petContext, ContentSync.dailyBoosts(this)) ?: return
+        perform(behaviour, view)
+    }
+
+    /**
+     * Turn a decision into something you can see.
+     *
+     * The pack says what he feels and how he should move; this is the only place that knows how to
+     * express either. Nothing here overrides an act the user just took — a behaviour that arrives
+     * while he is being petted, eating or asleep is dropped, because his own moment beats the
+     * content pack's suggestion.
+     */
+    private fun perform(behaviour: Behaviour, view: GhostView) {
+        if (sleeping || petTriggered) return
+
         android.util.Log.i(
             "GhostBehaviour",
             "${behaviour.id} -> ${behaviour.emote}/${behaviour.locomotion} " +
-                "vocal=${behaviour.vocal} bubble=${behaviour.bubble.token} " +
-                "intensity=${behaviour.intensity} | ctx=${petContext.species.id} " +
-                "${petContext.timeOfDay.id} hunger=${petContext.hunger.toInt()} " +
-                "energy=${petContext.energy.toInt()} happy=${petContext.happiness.toInt()} " +
-                "battery=${petContext.batteryBucket.id} charging=${petContext.charging} " +
-                "since=${petContext.minutesSinceInteraction}m"
+                "vocal=${behaviour.vocal} intensity=${behaviour.intensity}"
         )
+        behaviour.vocal?.let { view.showBubble(it, 1.9f) }
+
+        when (behaviour.emote) {
+            Emote.HAPPY -> {
+                view.showExpression(Expression.SMILE, 2.2f)
+                view.startWiggle()
+            }
+            Emote.AFFECTION -> {
+                view.showExpression(Expression.DELIGHTED, 2.4f)
+                view.spawnHeart()
+            }
+            Emote.SLEEPY -> view.showExpression(Expression.SLEEPY, 3.0f)
+            Emote.CURIOUS -> view.showExpression(Expression.CONFUSED, 2.2f)
+            Emote.SPOOKED -> view.spook()
+            Emote.MOODY -> view.spookLightly()
+            Emote.GOOFY -> view.setPuffTarget(0.30f * behaviour.intensity)
+            Emote.CONFIDENT -> view.setPuffTarget(0.10f * behaviour.intensity)
+            Emote.HUNGRY -> view.showExpression(Expression.CONFUSED, 1.6f)
+        }
+        if (behaviour.emote != Emote.GOOFY && behaviour.emote != Emote.CONFIDENT) {
+            view.setPuffTarget(0f)
+        }
+
+        // Locomotion is a nudge to the drift, never a teleport: he is a ghost, he glides.
+        val speed = driftSpeed * (0.6f + behaviour.intensity)
+        when (behaviour.locomotion) {
+            Locomotion.DRIFT -> driftAngle = Random.nextFloat() * 2f * PI.toFloat()
+            Locomotion.FLEE -> launch(angleTowardsOpenSpace())
+            Locomotion.APPROACH -> aimAt(usable.centerX().toFloat(), usable.centerY().toFloat(), speed * 2f)
+            Locomotion.PERCH_CORNER -> aimAt(nearestCornerX(), nearestCornerY(), speed * 1.6f)
+            Locomotion.ZOOMIES -> {
+                launch(Random.nextFloat() * 2f * PI.toFloat())
+                view.startWiggle()
+            }
+            Locomotion.STILL -> {
+                velX = 0f
+                velY = 0f
+            }
+        }
     }
+
+    /** Point him at a spot and give him just enough push to drift there. */
+    private fun aimAt(targetX: Float, targetY: Float, speed: Float) {
+        val cx = posX + windowPx / 2f
+        val cy = posY + headroomPx + windowPx / 2f
+        val angle = atan2(targetY - cy, targetX - cx)
+        driftAngle = angle
+        velX = cos(angle) * speed
+        velY = sin(angle) * speed
+        ghost?.setMotion(velX, velY)
+    }
+
+    private fun nearestCornerX(): Float =
+        if (posX + windowPx / 2f < usable.centerX()) usable.left + windowPx / 2f else usable.right - windowPx / 2f
+
+    private fun nearestCornerY(): Float =
+        if (posY < usable.centerY()) (usable.top + windowPx).toFloat() else (usable.bottom - windowPx).toFloat()
 
     /** Resizes and/or retints the live window in place when the Style tab changes, keeping him
      *  centred at the same spot rather than snapping to a corner or flickering off and back on. */
