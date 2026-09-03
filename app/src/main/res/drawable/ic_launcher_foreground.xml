@@ -10,5 +10,8 @@
         <path
             android:fillColor="#FF1A1730"
             android:pathData="M9.25,11a1.5,1.75 0,1 1,0 -3.5a1.5,1.75 0,0 1,0 3.5zM14.75,11a1.5,1.75 0,1 1,0 -3.5a1.5,1.75 0,0 1,0 3.5z" />
+        <path
+            android:fillColor="#FF1A1730"
+            android:pathData="M12,14.3a1,0.9 0,1 1,0 -1.8a1,0.9 0,0 1,0 1.8z" />
     </group>
 </vector>

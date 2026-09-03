@@ -78,10 +78,36 @@ class GhostView(context: Context) : View(context) {
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val angryGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    // Petting: a small hand that strokes the head for a couple of seconds.
+    private val handPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E8B894") }
+    private val handShadePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#C9976F") }
+
+    // Affection hearts, drifting up and fading — spawned while petted, or now and then when he's
+    // simply very happy.
+    private class Heart(val dx: Float, val born: Float)
+    private val hearts = mutableListOf<Heart>()
+    private val heartPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF6B7A") }
+
+    // Startled: a couple of sweat drops and a few short speed-lines trailing behind.
+    private val sweatPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D2EEFF") }
+    private val speedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        color = Color.parseColor("#8CFFFFFF")
+    }
+
+    // A little speech bubble — "Meow"/"Woof" when hungry, a happy vocalisation, and so on.
+    private val bubbleBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F2EFFB") }
+    private val bubbleTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#15122B")
+        textAlign = Paint.Align.CENTER
+    }
+
     private val bodyPath = Path()
     private val earPath = Path()
     private val rect = RectF()
     private var shadeShaderFor = -1f
+    private var shadeShaderHue: Float? = -999f
     private val density = resources.displayMetrics.density
 
     /** Which silhouette to draw. Body, motion and behaviour are otherwise identical. */
@@ -119,37 +145,86 @@ class GhostView(context: Context) : View(context) {
     /** Set by the owner: settled down for a nap — eyes shut, no idle glancing. */
     private var asleep = false
 
+    /** A hue in degrees, or null for his original colours. See [setTint]. */
+    private var tintHue: Float? = null
+
+    // Petting: held on for a beat, a small hand strokes his head.
+    private var petting = false
+    private var pettingEndsAt = 0f
+
+    // A gentle puff — big for a "goofy" moment, subtle and constant while brimming with energy.
+    private var puffTarget = 0f
+    private var puffAmount = 0f
+
+    // An extra wiggle-sway on top of the normal idle sway, for a happy little shimmy.
+    private var wiggleUntil = 0f
+
+    // Speech bubble text and when it should clear itself.
+    private var bubbleText: String? = null
+    private var bubbleEndsAt = 0f
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         // Glow and outline scale with the body so neither swamps a small ghost.
         outlinePaint.strokeWidth = w * 0.035f
-        if (w > 0 && h > 0) {
-            glowPaint.shader = RadialGradient(
-                w / 2f, h * 0.46f, w * 0.52f,
-                intArrayOf(
-                    Color.parseColor("#5567E8FF"),
-                    Color.parseColor("#2867E8FF"),
-                    Color.parseColor("#0067E8FF")
-                ),
-                floatArrayOf(0.42f, 0.66f, 1f),
-                Shader.TileMode.CLAMP
-            )
-            angryGlowPaint.shader = RadialGradient(
-                w / 2f, h * 0.46f, w * 0.52f,
-                intArrayOf(
-                    Color.parseColor("#66FF5252"),
-                    Color.parseColor("#33FF5252"),
-                    Color.parseColor("#00FF5252")
-                ),
-                floatArrayOf(0.42f, 0.66f, 1f),
-                Shader.TileMode.CLAMP
-            )
-        }
+        rebuildGlowShaders()
         scleraRimPaint.strokeWidth = w * 0.012f
         linePaint.strokeWidth = w * 0.028f
         whiskerPaint.strokeWidth = w * 0.012f
         zzzPaint.textSize = w * 0.16f
         angryBrowPaint.strokeWidth = w * 0.032f
+        bubbleTextPaint.textSize = w * 0.13f
+    }
+
+    /** Re-hues a base ARGB colour to the current tint, keeping its own alpha/saturation/value — an
+     *  unset tint returns the colour unchanged. */
+    private fun rehued(base: Int): Int {
+        val hue = tintHue ?: return base
+        val hsv = FloatArray(3)
+        Color.colorToHSV(base, hsv)
+        hsv[0] = hue
+        return Color.HSVToColor(Color.alpha(base), hsv)
+    }
+
+    /** The glow depends on both size and tint, so both paths funnel through here. */
+    private fun rebuildGlowShaders() {
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        val glowRgb = rehued(Color.parseColor("#67E8FF")) and 0x00FFFFFF
+        glowPaint.shader = RadialGradient(
+            w / 2f, h * 0.46f, w * 0.52f,
+            intArrayOf(
+                (0x55 shl 24) or glowRgb,
+                (0x28 shl 24) or glowRgb,
+                (0x00 shl 24) or glowRgb
+            ),
+            floatArrayOf(0.42f, 0.66f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        // Anger's glow stays red no matter the chosen tint — it's a mood signal, not a body colour.
+        angryGlowPaint.shader = RadialGradient(
+            w / 2f, h * 0.46f, w * 0.52f,
+            intArrayOf(
+                Color.parseColor("#66FF5252"),
+                Color.parseColor("#33FF5252"),
+                Color.parseColor("#00FF5252")
+            ),
+            floatArrayOf(0.42f, 0.66f, 1f),
+            Shader.TileMode.CLAMP
+        )
+    }
+
+    /** Recolours body, outline and glow to [tintHue], keeping each paint's original weight. */
+    private fun applyTint() {
+        bodyPaint.color = if (tintHue == null) Color.WHITE else Color.HSVToColor(floatArrayOf(tintHue!!, 0.14f, 1f))
+        bodyPaint.alpha = bodyAlpha
+        outlinePaint.color = rehued(Color.parseColor("#8C6C63C9"))
+        scleraRimPaint.color = rehued(Color.parseColor("#556C63C9"))
+        whiskerPaint.color = rehued(Color.parseColor("#8C6C63C9"))
+        zzzPaint.color = rehued(Color.parseColor("#C86C63C9"))
+        rebuildGlowShaders()
+        invalidate()
     }
 
     /** Called by the owner with the ghost's current velocity in px/s. */
@@ -178,6 +253,45 @@ class GhostView(context: Context) : View(context) {
     fun setMood(mood: Mood, asleep: Boolean) {
         this.mood = mood
         this.asleep = asleep
+    }
+
+    /** Recolours body, outline and glow to a new hue, keeping each paint's original weight
+     *  (alpha/saturation/brightness) — null restores his original colours exactly. */
+    fun setTint(hue: Float?) {
+        tintHue = hue
+        applyTint()
+    }
+
+    /** A hand settles in and strokes his head for a couple of seconds. */
+    fun startPetting() {
+        petting = true
+        pettingEndsAt = phase + 2f
+        spawnHeart()
+        spawnHeart()
+    }
+
+    /** A small heart drifts up from him and fades — used while petted, and now and then when
+     *  he's simply content. */
+    fun spawnHeart() {
+        if (hearts.size >= 4) return
+        hearts += Heart(dx = (Math.random().toFloat() - 0.5f) * 0.5f, born = phase)
+    }
+
+    /** A little speech bubble above his head for a beat — "Meow", "Woof", a happy "~", and so on. */
+    fun showBubble(text: String, durationSeconds: Float = 1.8f) {
+        bubbleText = text
+        bubbleEndsAt = phase + durationSeconds
+    }
+
+    /** 0 = normal silhouette. Around 0.08 reads as a subtle confident puff; around 0.3 is the full
+     *  cheeks-out "goofy" pose. Eases toward the target rather than snapping. */
+    fun setPuffTarget(target: Float) {
+        puffTarget = target
+    }
+
+    /** A brief extra shimmy on top of the usual idle sway — a happy little wiggle. */
+    fun startWiggle() {
+        wiggleUntil = phase + 1.2f
     }
 
     /** A small bump — used when the ghost hits the edge of the screen. */
@@ -221,6 +335,12 @@ class GhostView(context: Context) : View(context) {
                 blinkProgress = abs(1f - 2f * t)
             }
         }
+
+        if (petting && phase > pettingEndsAt) petting = false
+        if (bubbleText != null && phase > bubbleEndsAt) bubbleText = null
+        hearts.removeAll { phase - it.born > 1.3f }
+        // Eases toward the target rather than snapping, so a puff grows/settles instead of popping.
+        puffAmount += (puffTarget - puffAmount) * (1f - kotlin.math.exp(-4f * dt))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -233,16 +353,22 @@ class GhostView(context: Context) : View(context) {
 
         // Always-on idle motion: a bob, a slow sway, and a breath.
         val bob = sin(phase * 2.4f) * h * 0.035f
-        val sway = sin(phase * 1.35f) * 3.2f * (1f - fast)
+        // A happy little shimmy rides on top of the normal sway while it's active.
+        val wiggle = if (phase < wiggleUntil) sin(phase * 16f) * 7f else 0f
+        val sway = sin(phase * 1.35f) * 3.2f * (1f - fast) + wiggle
         val breath = 1f + sin(phase * 1.9f) * 0.022f
+        // Irritated: a fast, tiny jitter — too quick to read as movement, just as unease.
+        val moodyShake = if (!asleep && mood == Mood.ANGRY) (sin(phase * 55f) + sin(phase * 71f)) * w * 0.004f else 0f
+        // A confident/goofy puff of the whole silhouette.
+        val puffScale = 1f + puffAmount * 0.22f
 
         val lean = (velX / 900f).coerceIn(-0.32f, 0.32f)
         val stretch = min(0.14f, speed / 4200f)
 
         canvas.save()
-        canvas.translate(0f, bob)
+        canvas.translate(moodyShake, bob)
         canvas.rotate(sway + lean * 26f, w / 2f, h * 0.75f)
-        canvas.scale((1f - stretch) * breath, (1f + stretch) * breath, w / 2f, h)
+        canvas.scale((1f - stretch) * breath * puffScale, (1f + stretch) * breath * puffScale, w / 2f, h)
 
         val pad = w * 0.10f
         val left = pad
@@ -288,11 +414,12 @@ class GhostView(context: Context) : View(context) {
 
         // Soft inner shading so the body reads as volume rather than a flat blob. The shader only
         // depends on the size, so it is built once rather than sixty times a second.
-        if (shadeShaderFor != gw) {
+        if (shadeShaderFor != gw || shadeShaderHue != tintHue) {
             shadeShaderFor = gw
+            shadeShaderHue = tintHue
             shadePaint.shader = RadialGradient(
                 cx - r * 0.35f, top + r * 0.55f, gw * 1.05f,
-                intArrayOf(Color.parseColor("#00FFFFFF"), Color.parseColor("#3D6C63C9")),
+                intArrayOf(Color.parseColor("#00FFFFFF"), rehued(Color.parseColor("#3D6C63C9"))),
                 floatArrayOf(0.45f, 1f), Shader.TileMode.CLAMP
             )
         }
@@ -378,6 +505,11 @@ class GhostView(context: Context) : View(context) {
             )
         }
 
+        if (!asleep && startle > 0.35f) drawSpookEffects(canvas, cx, top, r, gw)
+        if (petting) drawPettingHand(canvas, cx, top, r, gw)
+        if (hearts.isNotEmpty()) drawHearts(canvas, w, cx, top, gw)
+        if (bubbleText != null) drawBubble(canvas, w, h, cx, top, gw)
+
         canvas.restore()
     }
 
@@ -404,6 +536,86 @@ class GhostView(context: Context) : View(context) {
                 canvas.drawLine(startX, y, startX + side * len, y + row * gw * 0.012f, whiskerPaint)
             }
         }
+    }
+
+    /** A small hand settling in above the head, swaying side to side as it strokes. */
+    private fun drawPettingHand(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val sway = sin(phase * 6f) * gw * 0.11f
+        val handCx = cx + sway
+        val handCy = top + r * 0.16f
+        val handW = gw * 0.36f
+        val handH = gw * 0.20f
+        for (i in -1..1) {
+            val fx = handCx + i * handW * 0.3f
+            rect.set(fx - handW * 0.08f, handCy - handH * 0.9f, fx + handW * 0.08f, handCy - handH * 0.15f)
+            canvas.drawRoundRect(rect, handW * 0.08f, handW * 0.08f, handShadePaint)
+        }
+        rect.set(handCx - handW / 2f, handCy - handH / 2f, handCx + handW / 2f, handCy + handH / 2f)
+        canvas.drawRoundRect(rect, handH * 0.5f, handH * 0.5f, handPaint)
+    }
+
+    /** Small hearts drifting up from him and fading — see [spawnHeart]. His view is cropped tight
+     *  around his silhouette, so the rise is clamped to stay inside it rather than sail off the
+     *  top edge into nothing. */
+    private fun drawHearts(canvas: Canvas, viewW: Float, cx: Float, top: Float, gw: Float) {
+        for (heart in hearts) {
+            val age = phase - heart.born
+            val t = (age / 1.3f).coerceIn(0f, 1f)
+            val s = gw * 0.09f * (1f - t * 0.3f)
+            val hx = (cx + heart.dx * gw + sin(age * 3f) * gw * 0.04f).coerceIn(s * 1.2f, viewW - s * 1.2f)
+            val hy = (top + gw * 0.08f - t * gw * 0.32f).coerceAtLeast(s * 1.2f)
+            heartPaint.alpha = ((1f - t) * 255f).toInt().coerceIn(0, 255)
+            canvas.drawCircle(hx - s * 0.5f, hy, s * 0.55f, heartPaint)
+            canvas.drawCircle(hx + s * 0.5f, hy, s * 0.55f, heartPaint)
+            earPath.reset()
+            earPath.moveTo(hx - s * 0.95f, hy + s * 0.15f)
+            earPath.lineTo(hx, hy + s * 1.2f)
+            earPath.lineTo(hx + s * 0.95f, hy + s * 0.15f)
+            earPath.close()
+            canvas.drawPath(earPath, heartPaint)
+        }
+    }
+
+    /** Sweat drops and a few short speed-lines trailing behind — how a good spook reads. */
+    private fun drawSpookEffects(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        sweatPaint.alpha = (startle * 235f).toInt().coerceIn(0, 235)
+        for (side in intArrayOf(-1, 1)) {
+            val dropX = cx + side * r * 0.72f
+            val dropY = top + r * 0.55f + sin(phase * 9f + side) * gw * 0.02f
+            val s = gw * 0.055f
+            rect.set(dropX - s * 0.55f, dropY - s * 0.7f, dropX + s * 0.55f, dropY + s * 0.7f)
+            canvas.drawOval(rect, sweatPaint)
+        }
+        speedLinePaint.strokeWidth = gw * 0.02f
+        speedLinePaint.alpha = (startle * 180f).toInt().coerceIn(0, 180)
+        val dir = if (velX >= 0f) -1f else 1f
+        for (i in 0..2) {
+            val ly = top + r * (0.35f + i * 0.28f)
+            val lx = cx + dir * r * (1.05f + i * 0.08f)
+            canvas.drawLine(lx, ly, lx + dir * gw * 0.22f, ly, speedLinePaint)
+        }
+    }
+
+    /** A little speech bubble with a tail pointing back down toward him — see [showBubble]. His
+     *  view is cropped tight around his silhouette, so the bubble is clamped to stay inside it
+     *  rather than drawn wherever looks nicest and risk being clipped off entirely. */
+    private fun drawBubble(canvas: Canvas, viewW: Float, viewH: Float, cx: Float, top: Float, gw: Float) {
+        val text = bubbleText ?: return
+        val padX = gw * 0.09f
+        val padY = gw * 0.06f
+        val bw = (bubbleTextPaint.measureText(text) + padX * 2f).coerceAtMost(viewW - 4f)
+        val bh = bubbleTextPaint.textSize + padY * 2f
+        val bcx = (cx + gw * 0.4f).coerceIn(bw / 2f + 2f, viewW - bw / 2f - 2f)
+        val bcy = (top - gw * 0.05f).coerceIn(bh / 2f + 2f, viewH - bh / 2f - 2f)
+        rect.set(bcx - bw / 2f, bcy - bh / 2f, bcx + bw / 2f, bcy + bh / 2f)
+        canvas.drawRoundRect(rect, bh * 0.4f, bh * 0.4f, bubbleBgPaint)
+        earPath.reset()
+        earPath.moveTo(bcx - gw * 0.05f, bcy + bh / 2f - gw * 0.01f)
+        earPath.lineTo(bcx - gw * 0.11f, bcy + bh / 2f + gw * 0.08f)
+        earPath.lineTo(bcx + gw * 0.02f, bcy + bh / 2f - gw * 0.01f)
+        earPath.close()
+        canvas.drawPath(earPath, bubbleBgPaint)
+        canvas.drawText(text, bcx, bcy + bubbleTextPaint.textSize * 0.32f, bubbleTextPaint)
     }
 
     /**

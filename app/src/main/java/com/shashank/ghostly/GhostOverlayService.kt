@@ -61,6 +61,9 @@ class GhostOverlayService : Service() {
         /** Transparent ring around the ghost that still reacts to a tap, in dp. */
         private const val HALO_DP = 22f
 
+        /** At or above this, he reads as brimming with energy: quicker, puffed, a little arrogant. */
+        private const val ENERGY_FULL_THRESHOLD = 90f
+
         @Volatile
         var isRunning: Boolean = false
             private set
@@ -98,6 +101,11 @@ class GhostOverlayService : Service() {
     private var windowPx = 0
     private var haloPx = 0
 
+    // What the window was last resized/retinted to, so the prefs listener only touches the
+    // window when the size or colour actually changed rather than on every stat tick.
+    private var lastSizeDp = -1
+    private var lastTintHue: Float? = -999f
+
     // Position of the window's top-left corner, kept as floats so motion stays smooth.
     private var posX = 0f
     private var posY = 0f
@@ -124,8 +132,18 @@ class GhostOverlayService : Service() {
     // playing, a manual nap, a treat or gift) so the two screens never drift far apart.
     private var sleeping = false
     private var mood: Mood = Mood.CONTENT
+    private var energyFull = false
     private var nextStatsTickAt = 0f
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    // A hungry buzz + meow/woof, or a happy little vocalisation, every so often.
+    private var nextFlourishAt = 20f
+
+    // Puffed up, floating and holding in a corner for a few seconds — a random idle quirk.
+    private var goofyUntil = 0f
+    private var nextGoofyCheckAt = 45f
+    private var goofyCornerX = 0f
+    private var goofyCornerY = 0f
 
     // So the notification is only rebuilt when what it would say actually changes.
     private var notifiedSleeping = false
@@ -264,7 +282,8 @@ class GhostOverlayService : Service() {
         density = resources.displayMetrics.density
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         clickThrough = Prefs.clickThrough(this)
-        ghostPx = (Prefs.sizeDp(this) * density).toInt()
+        lastSizeDp = Prefs.sizeDp(this)
+        ghostPx = (lastSizeDp * density).toInt()
         haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
         windowPx = ghostPx + haloPx * 2
         driftSpeed = 18f * density
@@ -272,6 +291,8 @@ class GhostOverlayService : Service() {
 
         val view = GhostView(this)
         view.species = Prefs.species(this)
+        lastTintHue = Prefs.colorHue(this)
+        view.setTint(lastTintHue)
         ghost = view
         val container = FrameLayout(this).apply {
             addView(
@@ -323,11 +344,49 @@ class GhostOverlayService : Service() {
         handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
 
         // Feeding, playing or napping from the app writes straight to Prefs; catch it here too, so
-        // he doesn't wait up to ten seconds to visibly react.
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> refreshMood() }
+        // he doesn't wait up to ten seconds to visibly react. A size or colour change from the
+        // Style tab lands here too, resized/retinted in place rather than needing a restart.
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            refreshMood()
+            syncAppearance()
+        }
         prefsListener = listener
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
         refreshMood()
+    }
+
+    /** Resizes and/or retints the live window in place when the Style tab changes, keeping him
+     *  centred at the same spot rather than snapping to a corner or flickering off and back on. */
+    private fun syncAppearance() {
+        val view = ghost ?: return
+
+        val newHue = Prefs.colorHue(this)
+        if (newHue != lastTintHue) {
+            lastTintHue = newHue
+            view.setTint(newHue)
+        }
+
+        val newSizeDp = Prefs.sizeDp(this)
+        if (newSizeDp != lastSizeDp) {
+            lastSizeDp = newSizeDp
+            val container = root ?: return
+            val newGhostPx = (newSizeDp * density).toInt()
+            val newWindowPx = newGhostPx + haloPx * 2
+            val delta = (newWindowPx - windowPx) / 2f
+            posX -= delta
+            posY -= delta
+            ghostPx = newGhostPx
+            windowPx = newWindowPx
+            clampIntoBounds()
+            params.width = windowPx
+            params.height = windowPx
+            params.x = posX.toInt()
+            params.y = posY.toInt()
+            view.layoutParams = FrameLayout.LayoutParams(ghostPx, ghostPx, android.view.Gravity.CENTER)
+            runCatching { windowManager.updateViewLayout(container, params) }
+            lastAppliedX = params.x
+            lastAppliedY = params.y
+        }
     }
 
     /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
@@ -336,6 +395,7 @@ class GhostOverlayService : Service() {
         val s = Emotions.snapshot(this)
         sleeping = s.body.sleeping
         mood = s.mood
+        energyFull = s.body.energy >= ENERGY_FULL_THRESHOLD
         ghost?.setMood(mood, sleeping)
 
         if (sleeping != notifiedSleeping || mood != notifiedMood) {
@@ -610,11 +670,35 @@ class GhostOverlayService : Service() {
 
         updateGaze(dt)
 
+        if (clock > nextFlourishAt) {
+            nextFlourishAt = clock + 25f + Random.nextFloat() * 25f
+            runFlourish()
+        }
+
+        if (clock < goofyUntil) {
+            // Puffed up, floating and holding in a corner rather than the usual drift.
+            val settle = 1f - exp(-1.6f * dt)
+            velX += ((goofyCornerX - posX) * 1.4f - velX) * settle
+            velY += ((goofyCornerY - posY) * 1.4f - velY) * settle
+            posX += velX * dt
+            posY += velY * dt
+            clampIntoBounds()
+            view.setMotion(velX, velY)
+            applyPosition()
+            return
+        }
+        view.setPuffTarget(if (energyFull) 0.1f else 0f)
+        if (clock > nextGoofyCheckAt) {
+            nextGoofyCheckAt = clock + 45f + Random.nextFloat() * 40f
+            triggerGoofy()
+        }
+
         // He is never quite still: the heading wanders, and the speed always settles back to a slow
         // float rather than to zero. Angry, that float turns into a restless, erratic pace — he's
-        // not going anywhere, but he's clearly not settled either.
+        // not going anywhere, but he's clearly not settled either. Brimming with energy, the float
+        // turns quicker and more purposeful instead.
         val angryJitter = if (mood == Mood.ANGRY) 2.6f else 1f
-        val angrySpeed = if (mood == Mood.ANGRY) 1.6f else 1f
+        val angrySpeed = if (mood == Mood.ANGRY) 1.6f else if (energyFull) 1.3f else 1f
         driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
         val targetX = cos(driftAngle) * driftSpeed * angrySpeed
         val targetY = sin(driftAngle) * driftSpeed * angrySpeed
@@ -639,6 +723,42 @@ class GhostOverlayService : Service() {
 
         view.setMotion(velX, velY)
         applyPosition()
+    }
+
+    /** A hungry buzz + species call, or — when he's doing well — a happy little vocalisation. */
+    private fun runFlourish() {
+        val view = ghost ?: return
+        val s = Emotions.snapshot(this)
+        val species = Prefs.species(this)
+        when {
+            s.body.hunger <= PetStats.HUNGRY_THRESHOLD -> {
+                buzz()
+                view.showBubble(
+                    when (species) {
+                        Species.CAT -> "Meow"
+                        Species.DOG -> "Woof"
+                        Species.GHOST -> "..."
+                    }
+                )
+            }
+            mood == Mood.CONTENT && s.body.happiness >= 70f -> when (species) {
+                Species.CAT -> view.showBubble("Purr~")
+                Species.DOG -> {
+                    view.showBubble("Woof!")
+                    view.startWiggle()
+                }
+                Species.GHOST -> if (Random.nextBoolean()) view.startWiggle() else view.showBubble("~")
+            }
+        }
+    }
+
+    /** Puffs him up and picks a screen corner to float over to and hold in for a few seconds. */
+    private fun triggerGoofy() {
+        if (sleeping || mood != Mood.CONTENT) return
+        goofyUntil = clock + 4.5f
+        goofyCornerX = if (Random.nextBoolean()) minX() else maxX()
+        goofyCornerY = if (Random.nextBoolean()) minY() else maxY()
+        ghost?.setPuffTarget(0.32f)
     }
 
     private fun bounceHorizontally() {

@@ -97,6 +97,7 @@ class GhostPlayground @JvmOverloads constructor(
     init {
         setWillNotDraw(false)
         ghost.species = Prefs.species(context)
+        ghost.setTint(Prefs.colorHue(context))
         addView(ghost, LayoutParams(size, size))
     }
 
@@ -104,6 +105,11 @@ class GhostPlayground @JvmOverloads constructor(
     fun setSpecies(species: Species) {
         ghost.species = species
         ghost.invalidate()
+    }
+
+    /** Called by the settings screen when the colour swatch changes. */
+    fun setTint(hue: Float?) {
+        ghost.setTint(hue)
     }
 
     /** Drops a toy in for him to chase — called when Play succeeds. Purely a visual flourish; the
@@ -163,12 +169,13 @@ class GhostPlayground @JvmOverloads constructor(
                 lookAt(event.x, event.y)
                 downOnHim = isOnGhost(event.x, event.y)
                 petTriggered = false
+                // Only a touch that actually lands on him counts — a miss nearby is not an
+                // interaction, so it neither spooks nor arms petting.
                 if (downOnHim) {
                     pettingArmed = true
                     petHandler.postDelayed(petRunnable, PET_HOLD_MS)
                 } else {
                     pettingArmed = false
-                    fleeFrom(event.x, event.y)
                 }
                 performClick()
                 return true
@@ -200,17 +207,17 @@ class GhostPlayground @JvmOverloads constructor(
         return hypot(x - cx, y - cy) <= size * 0.65f
     }
 
-    /** A gentle affection tick, cooldown-limited so holding still doesn't rocket happiness up. */
+    /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
     private fun pet() {
         val now = SystemClock.uptimeMillis()
-        if (now - lastPetAt < PET_COOLDOWN_MS) return
+        if (now - lastPetAt < PET_ANIMATION_MS) return
         lastPetAt = now
         val s = PetStats.snapshot(context)
         val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
         Prefs.saveStats(context, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
-        ghost.notice()
+        ghost.startPetting()
         // Still held: keep ticking affection for as long as the finger stays put.
-        petHandler.postDelayed(petRunnable, PET_COOLDOWN_MS)
+        petHandler.postDelayed(petRunnable, PET_ANIMATION_MS)
     }
 
     private fun lookAt(x: Float, y: Float) {
@@ -341,8 +348,8 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     private companion object {
-        const val PET_HOLD_MS = 420L
-        const val PET_COOLDOWN_MS = 1_800L
+        const val PET_HOLD_MS = 1_000L
+        const val PET_ANIMATION_MS = 2_000L
         const val FETCH_TIMEOUT_SECONDS = 6f
     }
 }

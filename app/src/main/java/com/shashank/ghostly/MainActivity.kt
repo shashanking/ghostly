@@ -32,6 +32,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -93,8 +94,10 @@ class MainActivity : Activity() {
     private lateinit var giftCard: View
 
     // Style
-    private val sizeButtons = mutableListOf<Pair<Int, Button>>()
     private val speciesButtons = mutableListOf<Pair<Species, Button>>()
+    private lateinit var sizeSeekBar: SeekBar
+    private lateinit var sizeValueLabel: TextView
+    private val colorSwatches = mutableListOf<Pair<Float?, View>>()
 
     // Settings
     private lateinit var modeSwitch: Switch
@@ -667,22 +670,70 @@ class MainActivity : Activity() {
         }
         column.addView(speciesRow)
 
-        column.addView(sectionLabel("Size"))
-        val sizeRow = LinearLayout(this).apply {
+        val sizeHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
+        }
+        sizeHeaderRow.addView(TextView(this).apply {
+            text = "Size"
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        })
+        sizeValueLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+        sizeHeaderRow.addView(sizeValueLabel)
+        column.addView(sizeHeaderRow)
+
+        sizeSeekBar = SeekBar(this).apply {
+            max = Prefs.SIZE_MAX - Prefs.SIZE_MIN
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
+            progressTintList = ColorStateList.valueOf(accent)
+            thumbTintList = ColorStateList.valueOf(accent)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    sizeValueLabel.text = "${Prefs.SIZE_MIN + progress} dp"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar) {
+                    chooseSize(Prefs.SIZE_MIN + seekBar.progress)
+                }
+            })
+        }
+        column.addView(sizeSeekBar)
+
+        column.addView(sectionLabel("Colour"))
+        val colorRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
         }
-        listOf("Small" to Prefs.SIZE_SMALL, "Medium" to Prefs.SIZE_MEDIUM, "Large" to Prefs.SIZE_LARGE)
-            .forEachIndexed { index, (label, value) ->
-                val button = pickerButton(label) { chooseSize(value) }
-                if (index > 0) (button.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
-                sizeButtons += value to button
-                sizeRow.addView(button)
-            }
-        column.addView(sizeRow)
+        val swatches = listOf<Float?>(null, 189f, 265f, 340f, 25f, 145f)
+        swatches.forEachIndexed { index, hue ->
+            val swatch = colorSwatch(hue) { chooseTint(hue) }
+            if (index > 0) (swatch.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
+            colorSwatches += hue to swatch
+            colorRow.addView(swatch)
+        }
+        column.addView(colorRow)
 
         scroll.addView(column)
         return scroll
+    }
+
+    /** A round tap target — his own colours for "no tint", a solid hue for everything else. */
+    private fun colorSwatch(hue: Float?, onClick: () -> Unit) = FrameLayout(this).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+        val fillColor = if (hue == null) Color.parseColor("#8C6C63C9") else
+            Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.95f))
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(fillColor)
+        }
+        setOnClickListener { onClick() }
+        addPressBounce(this)
     }
 
     private fun pickerButton(label: String, onClick: () -> Unit) = Button(this).apply {
@@ -1093,11 +1144,15 @@ class MainActivity : Activity() {
                 "action in his notification."
         }
 
-        val current = Prefs.sizeDp(this)
-        sizeButtons.forEach { (value, button) -> stylePickerState(button, value == current) }
+        val currentSize = Prefs.sizeDp(this)
+        sizeSeekBar.progress = currentSize - Prefs.SIZE_MIN
+        sizeValueLabel.text = "$currentSize dp"
 
         val currentSpecies = Prefs.species(this)
         speciesButtons.forEach { (species, button) -> stylePickerState(button, species == currentSpecies) }
+
+        val currentHue = Prefs.colorHue(this)
+        colorSwatches.forEach { (hue, swatch) -> swatchSelectedState(swatch, hue == currentHue) }
 
         refreshNeeds()
     }
@@ -1109,6 +1164,12 @@ class MainActivity : Activity() {
             if (selected) accent else cardStroke
         )
         button.setTextColor(if (selected) Color.WHITE else dim)
+    }
+
+    private fun swatchSelectedState(swatch: View, selected: Boolean) {
+        swatch.scaleX = if (selected) 1.15f else 1f
+        swatch.scaleY = if (selected) 1.15f else 1f
+        swatch.alpha = if (selected) 1f else 0.75f
     }
 
     private fun refreshNeeds() {
@@ -1190,8 +1251,15 @@ class MainActivity : Activity() {
     }
 
     private fun chooseSize(sizeDp: Int) {
+        // The overlay's own prefs listener resizes it live, in place — no restart needed.
         Prefs.setSizeDp(this, sizeDp)
-        restartOverlayIfRunning()
+        refreshState()
+    }
+
+    private fun chooseTint(hue: Float?) {
+        // Likewise retinted live by the overlay's prefs listener.
+        Prefs.setColorHue(this, hue)
+        playground.setTint(hue)
         refreshState()
     }
 

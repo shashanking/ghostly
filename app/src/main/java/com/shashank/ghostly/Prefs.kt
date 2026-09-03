@@ -14,6 +14,7 @@ object Prefs {
     private const val KEY_X = "x"
     private const val KEY_Y = "y"
     private const val KEY_SIZE = "size_dp"
+    private const val KEY_COLOR_HUE = "color_hue"
     private const val KEY_HAPTICS = "haptics"
     private const val KEY_CLICK_THROUGH = "click_through"
     private const val KEY_SPECIES = "species"
@@ -37,9 +38,9 @@ object Prefs {
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
 
-    const val SIZE_SMALL = 22
-    const val SIZE_MEDIUM = 32
-    const val SIZE_LARGE = 44
+    const val SIZE_MIN = 16
+    const val SIZE_MAX = 72
+    const val SIZE_DEFAULT = 32
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -60,13 +61,24 @@ object Prefs {
         prefs(context).edit().putFloat(KEY_X, x).putFloat(KEY_Y, y).apply()
 
     fun sizeDp(context: Context): Int {
-        val stored = prefs(context).getInt(KEY_SIZE, SIZE_MEDIUM)
-        // The ghost used to be several times bigger; fold any old preference back into the new scale.
-        return if (stored > SIZE_LARGE) SIZE_MEDIUM else stored
+        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT)
+        // Guards against a stray value from a much older build's size scale, not against the
+        // slider itself — the slider already clamps to [SIZE_MIN, SIZE_MAX].
+        return stored.coerceIn(SIZE_MIN, SIZE_MAX)
     }
 
     fun setSizeDp(context: Context, value: Int) =
-        prefs(context).edit().putInt(KEY_SIZE, value).apply()
+        prefs(context).edit().putInt(KEY_SIZE, value.coerceIn(SIZE_MIN, SIZE_MAX)).apply()
+
+    /** A hue in degrees [0, 360) the whole body is rotated to, or null for his original colours —
+     *  see [GhostView.setTint]. */
+    fun colorHue(context: Context): Float? {
+        val value = prefs(context).getFloat(KEY_COLOR_HUE, -1f)
+        return if (value < 0f) null else value
+    }
+
+    fun setColorHue(context: Context, hue: Float?) =
+        prefs(context).edit().putFloat(KEY_COLOR_HUE, hue ?: -1f).apply()
 
     /**
      * When true the ghost is intangible: every touch goes straight to the app underneath and he
