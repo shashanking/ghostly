@@ -16,8 +16,10 @@ import android.view.Choreographer
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -83,6 +85,9 @@ class OnboardingActivity : Activity() {
 
     /** Only alive while the avatar step is on screen. */
     private var nameField: EditText? = null
+
+    /** Marks the column inside a page, so the entrance animation can find it to stagger. */
+    private val PAGE_COLUMN_TAG = "onboarding-column"
     private var selectedSpecies = Species.GHOST
     private val speciesCards = mutableListOf<Pair<Species, LinearLayout>>()
     private val idleCallbacks = mutableListOf<Choreographer.FrameCallback>()
@@ -123,12 +128,36 @@ class OnboardingActivity : Activity() {
 
     // region navigation
 
+    /**
+     * Every onboarding step is centred in the screen rather than stacked from the top, so a short
+     * page does not leave a screenful of empty space under it. [ScrollView.isFillViewport] is what
+     * lets the column be as tall as the screen — without it the column shrinks to its content and
+     * there is nothing to centre within — and a page taller than the screen still scrolls.
+     */
+    private fun centredPage(column: LinearLayout): View {
+        column.tag = PAGE_COLUMN_TAG
+        // The column keeps its own height and is centred by the frame around it. Relying on the
+        // scroller to stretch it instead left every page sitting in the top half of the screen.
+        val holder = FrameLayout(this).apply {
+            addView(
+                column,
+                FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                },
+            )
+        }
+        return ScrollView(this).apply {
+            isFillViewport = true
+            addView(holder, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        }
+    }
+
     private fun goTo(step: Step) {
         stopAllIdlePreviews()
         speciesCards.clear()
         currentStep = step
         root.removeAllViews()
-        root.addView(
+        val page = (
             when (step) {
                 Step.SPLASH -> buildSplash()
                 Step.TUTORIAL_INTRO -> buildTutorialPage(0)
@@ -140,7 +169,38 @@ class OnboardingActivity : Activity() {
                 Step.PERMISSIONS -> buildPermissions()
                 Step.LAUNCH -> buildLaunch()
             }
-        )
+            )
+        root.addView(page)
+        animateIn(page)
+    }
+
+    /**
+     * The step settles into place rather than appearing: the page itself fades up, and whatever it
+     * is built from rises into place one item after another. Every screen in the app moves; these
+     * were the only ones that did not.
+     */
+    private fun animateIn(page: View) {
+        page.alpha = 0f
+        page.animate().alpha(1f).setDuration(220L).start()
+
+        // The rows to stagger are the children of whatever column the page is built around.
+        val column = page.findViewWithTag<ViewGroup>(PAGE_COLUMN_TAG) ?: return
+        val rise = dp(18).toFloat()
+        var delay = 40L
+        for (i in 0 until column.childCount) {
+            val child = column.getChildAt(i)
+            if (child.visibility != View.VISIBLE) continue
+            child.alpha = 0f
+            child.translationY = rise
+            child.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(delay)
+                .setDuration(300L)
+                .setInterpolator(DecelerateInterpolator(1.6f))
+                .start()
+            delay += 55L
+        }
     }
 
     private fun nextTutorialStep(index: Int): Step = when (index) {
@@ -187,6 +247,9 @@ class OnboardingActivity : Activity() {
         val page = tutorialPages[index]
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            // Centred, so the page reads as one thing rather than a stack pinned to the top of a
+            // mostly empty screen.
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(28), dp(20), dp(28), dp(28))
         }
 
@@ -200,38 +263,59 @@ class OnboardingActivity : Activity() {
             setOnClickListener { goTo(Step.LOGIN) }
         })
 
+        // He is the hero of every page, not just the first: the glyph sits beside him as a badge
+        // rather than standing in for him, so the thing being explained is on screen throughout.
         val hero = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(160), dp(160)).apply {
+            background = rounded(Palette.card, dp(30).toFloat(), Palette.cardStroke)
+            layoutParams = LinearLayout.LayoutParams(dp(190), dp(190)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(28)
+                topMargin = dp(40)
             }
         }
-        if (index == 0) {
-            hero.background = rounded(Palette.card, dp(28).toFloat(), Palette.cardStroke)
-            val ghost = GhostView(this)
-            hero.addView(ghost, FrameLayout.LayoutParams(dp(88), dp(88)).apply { gravity = Gravity.CENTER })
-            startIdlePreview(ghost)
-        } else {
-            hero.background = rounded(Palette.badge, dp(28).toFloat())
-            hero.addView(iconView(page.glyph, Palette.accent, 64).apply {
-                (this.layoutParams as FrameLayout.LayoutParams).gravity = Gravity.CENTER
-            })
+        val ghost = GhostView(this).apply {
+            setBodySize(dp(96))
+        }
+        hero.addView(
+            ghost,
+            FrameLayout.LayoutParams(
+                dp(96) + GhostView.bubbleSidePx(resources.displayMetrics.density) * 2,
+                dp(96) + GhostView.headroomPx(resources.displayMetrics.density, dp(96)) +
+                    GhostView.haloPadPx(dp(96)),
+            ).apply { gravity = Gravity.CENTER },
+        )
+        startIdlePreview(ghost)
+        if (index > 0) {
+            hero.addView(
+                iconView(page.glyph, Palette.bone, 26).apply {
+                    (this.layoutParams as FrameLayout.LayoutParams).apply {
+                        gravity = Gravity.TOP or Gravity.END
+                        topMargin = dp(14)
+                        marginEnd = dp(14)
+                    }
+                },
+            )
         }
         column.addView(hero)
 
         column.addView(TextView(this).apply {
             text = page.title
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 27f)
             typeface = serifFace
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(30) }
         })
         column.addView(TextView(this).apply {
             text = page.body
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setLineSpacing(dp(4).toFloat(), 1f)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
+            setLineSpacing(dp(5).toFloat(), 1f)
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
+                topMargin = dp(12)
+                marginStart = dp(6)
+                marginEnd = dp(6)
+            }
         })
 
         val dots = LinearLayout(this).apply {
@@ -254,7 +338,9 @@ class OnboardingActivity : Activity() {
             text = if (isLast) "Get Started" else "Next"
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.WHITE)
+            // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
+            // what these buttons used to be — put white text on a white button.
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
@@ -263,7 +349,7 @@ class OnboardingActivity : Activity() {
             addPressBounce(this)
         })
 
-        return ScrollView(this).apply { addView(column) }
+        return centredPage(column)
     }
 
     private fun buildLogin(): View {
@@ -314,11 +400,13 @@ class OnboardingActivity : Activity() {
             text = "Skip for now"
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
             setPadding(dp(8), dp(16), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             setOnClickListener { goTo(Step.AVATAR) }
         })
 
-        return ScrollView(this).apply { addView(column) }
+        return centredPage(column)
     }
 
     private fun signInWithGoogle() {
@@ -424,7 +512,9 @@ class OnboardingActivity : Activity() {
             text = "Continue"
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.WHITE)
+            // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
+            // what these buttons used to be — put white text on a white button.
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
@@ -437,7 +527,7 @@ class OnboardingActivity : Activity() {
             addPressBounce(this)
         })
 
-        return ScrollView(this).apply { addView(column) }
+        return centredPage(column)
     }
 
     /** The one text input in the app: a glass card, same shape as everything else. */
@@ -526,7 +616,9 @@ class OnboardingActivity : Activity() {
             text = "Continue"
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.WHITE)
+            // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
+            // what these buttons used to be — put white text on a white button.
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
@@ -547,7 +639,7 @@ class OnboardingActivity : Activity() {
             })
         }
 
-        return ScrollView(this).apply { addView(column) }
+        return centredPage(column)
     }
 
     private fun permissionCard(
@@ -659,7 +751,9 @@ class OnboardingActivity : Activity() {
             text = "Let him float"
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.WHITE)
+            // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
+            // what these buttons used to be — put white text on a white button.
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             typeface = uiMedium
             background = gradientRounded(Palette.accent, Palette.accentDeep, dp(18).toFloat())
@@ -668,7 +762,7 @@ class OnboardingActivity : Activity() {
             addPressBounce(this)
         })
 
-        return ScrollView(this).apply { addView(column) }
+        return centredPage(column)
     }
 
     private fun finishOnboarding() {
