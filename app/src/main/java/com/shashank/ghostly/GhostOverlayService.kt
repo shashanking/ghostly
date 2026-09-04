@@ -35,6 +35,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -87,6 +88,17 @@ class GhostOverlayService : Service() {
 
         /** Long enough to read as a dissolve, short enough that he is never missing. */
         private const val FADE_MS = 170L
+
+        /** Set pieces that make sense as a way of getting off a wall — none of them edge-seeking. */
+        private val EDGE_RECOVERY_MOVES = listOf(
+            Locomotion.ROLLOVER,
+            Locomotion.ORBIT,
+            Locomotion.PACE,
+            Locomotion.BOUNCE,
+        )
+
+        /** How long he may stay against a wall before he thinks better of it. */
+        private const val PINNED_SECONDS = 1.3f
 
         /** How much of the screen, top and bottom, he keeps out of. */
         private const val BAND_MARGIN = 0.05f
@@ -231,6 +243,9 @@ class GhostOverlayService : Service() {
     private var routineDir = 1f
     private var routineSpeed = 0f
 
+    /** When he first ended up against a wall, so being stuck on one can be noticed and undone. */
+    private var pinnedSince = 0f
+
     /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
     private var homing = false
     private var homingToX = 0f
@@ -374,6 +389,7 @@ class GhostOverlayService : Service() {
             lastFrameAt = SystemClock.elapsedRealtime()
             clock += dt
             tick(dt)
+            watchForPinning()
             ghost?.let { view ->
                 view.advance(dt)
                 view.invalidate()
@@ -1270,6 +1286,51 @@ class GhostOverlayService : Service() {
      * Starts one of the set-piece movements. Each is given a few seconds, an anchor at wherever he
      * is standing, and then runs itself in [tickRoutine] until its time is up.
      */
+    /**
+     * Nothing should hold him against the side of the screen for long — not a set piece that ran
+     * out of room, not a launch that spent itself into a corner, not a target that happened to sit
+     * on the edge. If he is still there after a second and a bit, he peels off and does something
+     * else.
+     */
+    private fun watchForPinning() {
+        if (dragging || homing || sleeping) {
+            pinnedSince = 0f
+            return
+        }
+        if (!atEdge()) {
+            pinnedSince = 0f
+            return
+        }
+        if (pinnedSince == 0f) {
+            pinnedSince = clock
+            return
+        }
+        if (clock - pinnedSince < PINNED_SECONDS) return
+        pinnedSince = 0f
+        val view = ghost ?: return
+        // Away from whichever wall he is on, then on with something new.
+        val awayX = when {
+            posX <= minX() + 1f -> 1f
+            posX >= maxX() - 1f -> -1f
+            else -> 0f
+        }
+        val awayY = when {
+            posY <= minY() + 1f -> 1f
+            posY >= maxY() - 1f -> -1f
+            else -> 0f
+        }
+        driftAngle = atan2(
+            if (awayY == 0f) (Random.nextFloat() - 0.5f) else awayY,
+            if (awayX == 0f) (Random.nextFloat() - 0.5f) else awayX
+        )
+        velX = cos(driftAngle) * driftSpeed * 1.4f
+        velY = sin(driftAngle) * driftSpeed * 1.4f
+        routine = null
+        if (Random.nextFloat() < 0.4f) {
+            startRoutine(EDGE_RECOVERY_MOVES.random(), 0.6f, driftSpeed * 1.5f, view)
+        }
+    }
+
     private fun startRoutine(kind: Locomotion, intensity: Float, speed: Float, view: GhostView) {
         routine = kind
         routineAnchorX = posX
@@ -1392,7 +1453,36 @@ class GhostOverlayService : Service() {
             }
             else -> Unit
         }
+        // Peek and the bounce's floor are *meant* to press against an edge; everything else that
+        // reaches one has run out of room, and grinding along the wall until its few seconds are up
+        // is the one thing that makes him look like a bug rather than a pet.
+        val pressing = kind != Locomotion.PEEK
+        val hitX = pressing && (posX < minX() || posX > maxX())
+        val hitY = pressing && kind != Locomotion.BOUNCE && (posY < minY() || posY > maxY())
         clampIntoBounds()
+        if (hitX || hitY) {
+            if (hitX) velX = -abs(velX) * sign(if (posX <= minX()) 1f else -1f)
+            if (hitY) velY = -abs(velY) * sign(if (posY <= minY()) 1f else -1f)
+            hitEdgeMidMovement(view)
+            return
+        }
+        view.setMotion(velX, velY)
+        applyPosition()
+    }
+
+    /**
+     * He has run into the side of the screen partway through doing something. Rather than pressing
+     * on into it for the rest of the routine, he turns away — and half the time changes his mind
+     * about what he was doing altogether and starts something else.
+     */
+    private fun hitEdgeMidMovement(view: GhostView) {
+        routine = null
+        driftAngle = atan2(velY, velX)
+        ghost?.spookLightly()
+        if (Random.nextFloat() < 0.5f) {
+            val next = EDGE_RECOVERY_MOVES.random()
+            startRoutine(next, 0.6f, driftSpeed * (1.2f + Random.nextFloat()), view)
+        }
         view.setMotion(velX, velY)
         applyPosition()
     }
@@ -1463,6 +1553,10 @@ class GhostOverlayService : Service() {
     // has to come up by the headroom as well — without this he sinks below the navigation bar by
     // exactly the height of his own speech bubble.
     private fun maxY() = bandBottom() - headroomPx - windowPx + haloPx
+
+    /** Against any wall right now, near enough. */
+    private fun atEdge(): Boolean =
+        posX <= minX() + 1f || posX >= maxX() - 1f || posY <= minY() + 1f || posY >= maxY() - 1f
 
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
