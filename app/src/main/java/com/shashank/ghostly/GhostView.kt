@@ -49,6 +49,13 @@ class GhostView(context: Context) : View(context) {
         /** Clear air between the tip of the tail and the top of his head. */
         const val BUBBLE_LIFT_DP = 4f
 
+        /**
+         * The widest a bubble may be. Small on purpose: it sits centred over his head and stays
+         * there, so anything wider would hang off the side of the screen when he is near an edge.
+         * A longer vocal becomes several of these, one after another.
+         */
+        const val BUBBLE_MAX_W_DP = 62f
+
         /** What a bubble needs vertically: its own height, its tail, and the gap above his crown. */
         private val bubbleStackDp = BUBBLE_TEXT_DP + BUBBLE_PAD_Y_DP * 2f + BUBBLE_TAIL_DP + BUBBLE_LIFT_DP
 
@@ -236,6 +243,10 @@ class GhostView(context: Context) : View(context) {
     private var bubbleText: String? = null
     private var bubbleEndsAt = 0f
 
+    /** What he still has left to say, one bubble at a time — see [showBubble]. */
+    private val bubbleQueue = ArrayDeque<String>()
+    private var bubbleSegmentSeconds = 0f
+
     // Eating: mouth chomps rapidly and he dips toward the food, sending up little hearts as he
     // goes — see startEating.
     private var eating = false
@@ -249,9 +260,6 @@ class GhostView(context: Context) : View(context) {
      */
     private var bodySizePx = 0
 
-    /** Reused by the bubble's edge clamp so a visible bubble allocates nothing per frame. */
-    private val locOnScreen = IntArray(2)
-    private val visibleRect = android.graphics.Rect()
 
     fun setBodySize(px: Int) {
         if (px == bodySizePx) return
@@ -417,9 +425,49 @@ class GhostView(context: Context) : View(context) {
     }
 
     /** A little speech bubble above his head for a beat — "Meow", "Woof", a happy "~", and so on. */
+    /**
+     * Says [text] above his head. A long vocal is broken into bubbles that come one after another
+     * rather than being shown as one wide one: the bubble is a fixed size for legibility, so a wide
+     * one is a wide one on every ghost, and near the side of the screen there is simply nowhere for
+     * it to go — it was being cut off at the edge.
+     */
     fun showBubble(text: String, durationSeconds: Float = 1.8f) {
-        bubbleText = text
-        bubbleEndsAt = phase + durationSeconds
+        val parts = splitIntoBubbles(text)
+        bubbleQueue.clear()
+        if (parts.isEmpty()) {
+            bubbleText = null
+            return
+        }
+        bubbleSegmentSeconds = maxOf(0.85f, durationSeconds / parts.size)
+        bubbleText = parts.first()
+        bubbleEndsAt = phase + bubbleSegmentSeconds
+        for (i in 1 until parts.size) bubbleQueue.addLast(parts[i])
+    }
+
+    /**
+     * Greedily packs words into bubbles no wider than [BUBBLE_MAX_W_DP]. A single word longer than
+     * that is left alone — better one over-wide bubble than a word chopped in half.
+     */
+    private fun splitIntoBubbles(text: String): List<String> {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val maxW = BUBBLE_MAX_W_DP * density - BUBBLE_PAD_X_DP * density * 2f
+        if (bubbleTextPaint.measureText(trimmed) <= maxW) return listOf(trimmed)
+        val out = mutableListOf<String>()
+        val line = StringBuilder()
+        for (word in trimmed.split(' ').filter { it.isNotEmpty() }) {
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (bubbleTextPaint.measureText(candidate) <= maxW || line.isEmpty()) {
+                line.setLength(0)
+                line.append(candidate)
+            } else {
+                out += line.toString()
+                line.setLength(0)
+                line.append(word)
+            }
+        }
+        if (line.isNotEmpty()) out += line.toString()
+        return out
     }
 
     /** 0 = normal silhouette. Around 0.08 reads as a subtle confident puff; around 0.3 is the full
@@ -504,7 +552,11 @@ class GhostView(context: Context) : View(context) {
         }
 
         if (petting && phase > pettingEndsAt) petting = false
-        if (bubbleText != null && phase > bubbleEndsAt) bubbleText = null
+        if (bubbleText != null && phase > bubbleEndsAt) {
+            // Straight on to the next thing he has to say, if there is one.
+            bubbleText = bubbleQueue.removeFirstOrNull()
+            if (bubbleText != null) bubbleEndsAt = phase + bubbleSegmentSeconds
+        }
         if (expression != Expression.NONE && phase > expressionEndsAt) expression = Expression.NONE
         if (eating) {
             if (phase > eatingEndsAt) {
@@ -776,7 +828,7 @@ class GhostView(context: Context) : View(context) {
         if (!asleep && startle > 0.35f) drawSpookEffects(canvas, cx, top, r, gw)
         if (petting) drawPettingHand(canvas, cx, top, r, gw)
         if (hearts.isNotEmpty()) drawHearts(canvas, w, cx, top, gw)
-        if (bubbleText != null) drawBubble(canvas, vw, cx, top, gw, -sideInset)
+        if (bubbleText != null) drawBubble(canvas, cx, top)
 
         canvas.restore()
     }
@@ -874,62 +926,35 @@ class GhostView(context: Context) : View(context) {
         }
     }
 
-    /** A little speech bubble with a tail pointing back down toward him — see [showBubble]. His
-     *  view is cropped tight around his silhouette, so the bubble is clamped to stay inside it
-     *  rather than drawn wherever looks nicest and risk being clipped off entirely. */
-    private fun drawBubble(canvas: Canvas, viewW: Float, cx: Float, top: Float, gw: Float, originX: Float) {
-        val raw = bubbleText ?: return
+    /**
+     * The speech bubble: straight above his crown, centred on him, and small.
+     *
+     * It does not move about. It used to be nudged sideways and then slid along to dodge the screen
+     * edge, which meant it wandered over his head depending on where he was standing. A long vocal
+     * is broken into several small bubbles instead — see [showBubble].
+     */
+    private fun drawBubble(canvas: Canvas, cx: Float, top: Float) {
+        val text = bubbleText ?: return
         val padX = BUBBLE_PAD_X_DP * density
         val padY = BUBBLE_PAD_Y_DP * density
-        // The bubble is a fixed size at every ghost size, so on a small ghost it is wider than he
-        // is: it is laid out across the whole view, side room included, and only a vocal longer
-        // than that gets shortened rather than sliced off at the edge.
-        val maxW = viewW - 4f
-        var text = raw
-        if (bubbleTextPaint.measureText(text) + padX * 2f > maxW) {
-            while (text.length > 1 && bubbleTextPaint.measureText("$text…") + padX * 2f > maxW) {
-                text = text.dropLast(1)
-            }
-            text = "$text…"
-        }
         val bw = bubbleTextPaint.measureText(text) + padX * 2f
         val bh = bubbleTextPaint.textSize + padY * 2f
-        // Above the crown, not on it: the tail hangs down toward his head and the whole bubble
-        // lives in the strip the view reserves at the top (BUBBLE_HEADROOM).
-        // Two clamps. Inside the view first, so the bubble keeps its side room; then against the
-        // display, because near a screen edge the view itself hangs off it — the window is wider
-        // than he is — and a bubble that only respected the view would be sliced off by the screen.
-        var bcx = (cx + gw * 0.16f).coerceIn(originX + bw / 2f + 2f, originX + viewW - bw / 2f - 2f)
-        getLocationOnScreen(locOnScreen)
-        val sideInsetLocal = -originX
-        // Whatever of the view is actually on show: off the side of the display for the floating
-        // ghost, or the card he lives in inside the app. Both cut a bubble the same way.
-        val edgeLeft: Float
-        val edgeRight: Float
-        if (getGlobalVisibleRect(visibleRect) && visibleRect.width() > 0) {
-            edgeLeft = visibleRect.left.toFloat()
-            edgeRight = visibleRect.right.toFloat()
-        } else {
-            edgeLeft = 0f
-            edgeRight = resources.displayMetrics.widthPixels.toFloat()
-        }
-        val lo = edgeLeft + 2f - locOnScreen[0] - sideInsetLocal + bw / 2f
-        val hi = edgeRight - 2f - locOnScreen[0] - sideInsetLocal - bw / 2f
-        if (hi > lo) bcx = bcx.coerceIn(lo, hi)
+        val tail = BUBBLE_TAIL_DP * density
+        val tailLean = tail * 0.35f
         // Measured up from his crown, not down from the bubble: the tail hangs below the bubble,
         // and sizing it from the bubble's own height put the tail — and on a small ghost the
         // bubble with it — down on top of his head.
-        val tail = BUBBLE_TAIL_DP * density
         val bcy = (top - BUBBLE_LIFT_DP * density - tail - bh / 2f).coerceAtLeast(bh / 2f + 1f)
-        rect.set(bcx - bw / 2f, bcy - bh / 2f, bcx + bw / 2f, bcy + bh / 2f)
+
+        rect.set(cx - bw / 2f, bcy - bh / 2f, cx + bw / 2f, bcy + bh / 2f)
         canvas.drawRoundRect(rect, bh * 0.42f, bh * 0.42f, bubbleBgPaint)
         earPath.reset()
-        earPath.moveTo(bcx - tail * 0.7f, bcy + bh / 2f - 1f)
-        earPath.lineTo(bcx - tail * 1.3f, bcy + bh / 2f + tail)
-        earPath.lineTo(bcx + tail * 0.2f, bcy + bh / 2f - 1f)
+        earPath.moveTo(cx - tailLean, bcy + bh / 2f - 1f)
+        earPath.lineTo(cx - tailLean * 0.4f, bcy + bh / 2f + tail)
+        earPath.lineTo(cx + tailLean, bcy + bh / 2f - 1f)
         earPath.close()
         canvas.drawPath(earPath, bubbleBgPaint)
-        canvas.drawText(text, bcx, bcy + bubbleTextPaint.textSize * 0.32f, bubbleTextPaint)
+        canvas.drawText(text, cx, bcy + bubbleTextPaint.textSize * 0.32f, bubbleTextPaint)
     }
 
     /**

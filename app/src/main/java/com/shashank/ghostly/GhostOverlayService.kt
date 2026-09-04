@@ -88,6 +88,9 @@ class GhostOverlayService : Service() {
         /** Long enough to read as a dissolve, short enough that he is never missing. */
         private const val FADE_MS = 170L
 
+        /** How much of the screen, top and bottom, he keeps out of. */
+        private const val BAND_MARGIN = 0.05f
+
         /** Longer than any flight across a screen; a cap, not a schedule. */
         private const val HOMING_TIMEOUT_SECONDS = 4f
 
@@ -1197,7 +1200,7 @@ class GhostOverlayService : Service() {
         val bandMid = (minY() + maxY()) / 2f
         val bandHalf = ((maxY() - minY()) / 2f).coerceAtLeast(1f)
         val strayed = ((posY - bandMid) / bandHalf).coerceIn(-1f, 1f)
-        val recentre = -(strayed * strayed * strayed) * driftSpeed * 1.6f
+        val recentre = -(strayed * strayed * strayed) * driftSpeed * 0.9f
 
         val settle = 1f - exp(-0.85f * dt)
         velX += (targetX - velX) * settle
@@ -1440,25 +1443,26 @@ class GhostOverlayService : Service() {
     private fun overhang() = ghostPx * 0.05f
 
     /**
-     * He keeps off the top and bottom of the screen. Those are where a floating ghost is most in
-     * the way — the status bar and the clock above, the gesture bar and whatever the app puts at
-     * the bottom below — and where he is most likely to be sitting on something you are reading.
-     * The band is enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece
-     * inherit it rather than each having to remember.
+     * The strip of screen he is allowed in. At the top he may go right up to the system bar — there
+     * is nothing up there he gets in the way of. At the bottom he stops [BAND_MARGIN] short, which
+     * keeps him off the gesture bar and off whatever an app puts along its own bottom edge.
+     * Enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece inherit it
+     * rather than each having to remember.
      */
-    private fun topInset() = usable.height() * 0.15f
+    private fun bandTop(): Float = usable.top.toFloat()
 
-    private fun bottomInset() = usable.height() * 0.19f
+    private fun bandBottom(): Float =
+        minOf(usable.bottom.toFloat(), bounds.height() * (1f - BAND_MARGIN))
 
     private fun minX() = usable.left - haloPx - overhang()
     private fun maxX() = usable.right - windowPx + haloPx + overhang()
     // His body starts headroomPx below the top of the window, so the vertical bounds shift by it:
     // he may sit at the very top of the screen with the bubble space hanging off-screen above.
-    private fun minY() = usable.top + topInset() - haloPx - headroomPx
+    private fun minY() = bandTop() - haloPx - headroomPx
     // The window is windowPx + headroomPx tall and his body sits in the BOTTOM of it, so the floor
     // has to come up by the headroom as well — without this he sinks below the navigation bar by
     // exactly the height of his own speech bubble.
-    private fun maxY() = usable.bottom - bottomInset() - headroomPx - windowPx + haloPx
+    private fun maxY() = bandBottom() - headroomPx - windowPx + haloPx
 
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
