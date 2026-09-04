@@ -100,27 +100,43 @@ class BehaviourPack(
         const val ASSET_NAME = "behaviour-pack.json"
 
         /**
-         * The downloaded pack wins when it exists and parses; the bundled one is the floor the app
-         * can never fall below.
+         * Whichever pack is newer wins, downloaded or bundled, with a tie going to the downloaded
+         * one. The bundled pack is the floor the app can never fall below — and an app update that
+         * ships new content has to be able to raise that floor. Taking the downloaded pack on sight
+         * meant anyone who had ever synced was stuck on whatever the server last sent, however old,
+         * and never saw content added in a release.
          */
         fun load(context: Context, assetName: String = ASSET_NAME): BehaviourPack? {
-            val downloaded = java.io.File(context.filesDir, assetName)
-            if (downloaded.isFile) {
-                runCatching { parse(JSONObject(downloaded.readText())) }
-                    .getOrNull()?.takeIf { it.reactions.isNotEmpty() }?.let { return it }
-            }
-            return runCatching {
+            val bundled = runCatching {
                 val json = context.assets.open(assetName).bufferedReader().use { it.readText() }
-                parse(JSONObject(json))
+                JSONObject(json)
             }.getOrNull()
+            val downloaded = runCatching {
+                java.io.File(context.filesDir, assetName).takeIf { it.isFile }?.let { JSONObject(it.readText()) }
+            }.getOrNull()
+
+            val bundledVersion = bundled?.optInt("version", 0) ?: -1
+            val downloadedVersion = downloaded?.optInt("version", 0) ?: -1
+            val preferred = if (downloadedVersion >= bundledVersion) downloaded else bundled
+            val fallback = if (preferred === downloaded) bundled else downloaded
+
+            preferred?.let { json ->
+                runCatching { parse(json) }.getOrNull()?.takeIf { it.reactions.isNotEmpty() }?.let { return it }
+            }
+            return fallback?.let { json -> runCatching { parse(json) }.getOrNull() }
         }
 
-        /** Version of whichever pack [load] would return. */
+        /** Version of whichever pack [load] would return — the newer of the two. */
         fun loadedVersion(context: Context): Int = runCatching {
-            val downloaded = java.io.File(context.filesDir, ASSET_NAME)
-            val text = if (downloaded.isFile) downloaded.readText()
-            else context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
-            JSONObject(text).optInt("version", 0)
+            val bundled = runCatching {
+                JSONObject(context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() })
+                    .optInt("version", 0)
+            }.getOrDefault(0)
+            val downloaded = runCatching {
+                java.io.File(context.filesDir, ASSET_NAME).takeIf { it.isFile }
+                    ?.let { JSONObject(it.readText()).optInt("version", 0) } ?: 0
+            }.getOrDefault(0)
+            maxOf(bundled, downloaded)
         }.getOrDefault(0)
 
         fun parse(root: JSONObject): BehaviourPack {

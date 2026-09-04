@@ -30,6 +30,7 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
@@ -214,6 +215,18 @@ class GhostOverlayService : Service() {
 
     /** Blank room below his body inside the window, so the contrast wash is not cut off. */
     private var haloPadPx = 0
+
+    /**
+     * A movement set piece that has taken him over for a few seconds — a roll, a bounce, a loop.
+     * Null the rest of the time, when he is simply drifting.
+     */
+    private var routine: Locomotion? = null
+    private var routineUntil = 0f
+    private var routineAnchorX = 0f
+    private var routineAnchorY = 0f
+    private var routineAngle = 0f
+    private var routineDir = 1f
+    private var routineSpeed = 0f
 
     /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
     private var homing = false
@@ -704,6 +717,9 @@ class GhostOverlayService : Service() {
                 velX = 0f
                 velY = 0f
             }
+            Locomotion.ROLLOVER, Locomotion.BOUNCE, Locomotion.ORBIT,
+            Locomotion.PACE, Locomotion.EDGE_SLIDE, Locomotion.PEEK ->
+                startRoutine(behaviour.locomotion, behaviour.intensity, speed, view)
         }
     }
 
@@ -1119,6 +1135,11 @@ class GhostOverlayService : Service() {
             return
         }
 
+        if (routine != null) {
+            tickRoutine(dt)
+            return
+        }
+
         if (sleeping) {
             // Settle to a stop and stay put rather than drifting off mid-nap.
             val settle = 1f - exp(-2.5f * dt)
@@ -1230,6 +1251,137 @@ class GhostOverlayService : Service() {
      * drift, flourishes, the behaviour engine — gets a say until he lands. [arrivedHome] is what
      * the app waits on before it takes him over, so the hand-off happens with him already in place.
      */
+    /**
+     * Starts one of the set-piece movements. Each is given a few seconds, an anchor at wherever he
+     * is standing, and then runs itself in [tickRoutine] until its time is up.
+     */
+    private fun startRoutine(kind: Locomotion, intensity: Float, speed: Float, view: GhostView) {
+        routine = kind
+        routineAnchorX = posX
+        routineAnchorY = posY
+        routineDir = if (Random.nextBoolean()) 1f else -1f
+        routineSpeed = speed
+        velX = 0f
+        velY = 0f
+        when (kind) {
+            Locomotion.ROLLOVER -> {
+                val seconds = 1.5f + intensity * 1.2f
+                routineUntil = clock + seconds
+                // Tips over as he drifts: the sideways glide is what stops it reading as a spin.
+                velX = routineDir * speed * 1.4f
+                velY = -speed * 0.25f
+                view.startRoll(seconds, if (intensity > 0.8f) 2f else 1f)
+            }
+            Locomotion.BOUNCE -> {
+                routineUntil = clock + 3.4f
+                velX = routineDir * speed * 0.9f
+                velY = -speed * 3.2f
+            }
+            Locomotion.ORBIT -> {
+                routineUntil = clock + 3.2f + intensity * 2f
+                // Anchored on the middle of the loop, not on him, so he circles something.
+                val radius = minOf(usable.width(), usable.height()) * 0.16f
+                routineAngle = Random.nextFloat() * 2f * PI.toFloat()
+                routineAnchorX = posX - cos(routineAngle) * radius
+                routineAnchorY = posY - sin(routineAngle) * radius
+                routineSpeed = radius
+            }
+            Locomotion.PACE -> {
+                routineUntil = clock + 4f
+                routineSpeed = minOf(usable.width() * 0.22f, ghostPx * 3.2f)
+                velX = routineDir * speed * 1.6f
+            }
+            Locomotion.EDGE_SLIDE -> {
+                routineUntil = clock + 3.6f
+                routineAnchorX = if (posX + windowPx / 2f < usable.centerX()) minX() else maxX()
+                velY = routineDir * speed * 1.5f
+            }
+            Locomotion.PEEK -> {
+                routineUntil = clock + 3.8f
+                // Off the near edge by most of himself, so only a sliver of him is left showing.
+                val leaving = posX + windowPx / 2f < usable.centerX()
+                routineAnchorX = if (leaving) minX() - ghostPx * 0.62f else maxX() + ghostPx * 0.62f
+                routineDir = if (leaving) -1f else 1f
+            }
+            else -> routine = null
+        }
+    }
+
+    /**
+     * Runs whichever set piece is active. Each one steers him directly rather than nudging his
+     * drift, and when its time is up he is handed back to the ordinary wander.
+     */
+    private fun tickRoutine(dt: Float) {
+        val view = ghost ?: return
+        val kind = routine ?: return
+        if (clock > routineUntil) {
+            routine = null
+            driftAngle = atan2(velY, velX)
+            return
+        }
+        val settle = 1f - exp(-4f * dt)
+        when (kind) {
+            Locomotion.BOUNCE -> {
+                velY += 1_500f * density * dt
+                posX += velX * dt
+                posY += velY * dt
+                if (posY >= maxY()) {
+                    posY = maxY()
+                    // Each landing takes a bite out of the bounce, so it dies down rather than
+                    // going forever, and he squashes on impact.
+                    velY = -velY * 0.62f
+                    if (abs(velY) < 60f * density) {
+                        velY = 0f
+                        routineUntil = clock
+                    } else {
+                        view.squash(minOf(1.2f, abs(velY) / (600f * density)))
+                        buzz()
+                    }
+                }
+            }
+            Locomotion.ORBIT -> {
+                routineAngle += dt * (1.6f + routineSpeed / (240f * density))
+                val nx = routineAnchorX + cos(routineAngle) * routineSpeed
+                val ny = routineAnchorY + sin(routineAngle) * routineSpeed
+                velX = (nx - posX) / dt.coerceAtLeast(0.001f)
+                velY = (ny - posY) / dt.coerceAtLeast(0.001f)
+                posX = nx
+                posY = ny
+            }
+            Locomotion.PACE -> {
+                posX += velX * dt
+                if (abs(posX - routineAnchorX) > routineSpeed) {
+                    velX = -velX
+                    posX = routineAnchorX + routineSpeed * (if (posX > routineAnchorX) 1f else -1f)
+                    view.lookAt(if (velX > 0f) 1f else -1f, 0f)
+                }
+            }
+            Locomotion.EDGE_SLIDE -> {
+                velX += ((routineAnchorX - posX) * 3.4f - velX) * settle
+                posX += velX * dt
+                posY += velY * dt
+                if (posY <= minY() || posY >= maxY()) velY = -velY
+            }
+            Locomotion.PEEK -> {
+                // Out for the first half, leaning back in for the second.
+                val goingOut = clock < routineUntil - 1.6f
+                val targetX = if (goingOut) routineAnchorX else routineAnchorX - routineDir * ghostPx * 1.4f
+                velX += ((targetX - posX) * 3.2f - velX) * settle
+                posX += velX * dt
+                view.lookAt(-routineDir, 0f)
+            }
+            Locomotion.ROLLOVER -> {
+                posX += velX * dt
+                posY += velY * dt
+                velY += 40f * density * dt
+            }
+            else -> Unit
+        }
+        clampIntoBounds()
+        view.setMotion(velX, velY)
+        applyPosition()
+    }
+
     private fun tickHoming(dt: Float) {
         val view = ghost ?: return
         val dx = homingToX - posX

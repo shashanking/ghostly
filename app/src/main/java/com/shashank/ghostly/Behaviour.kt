@@ -15,9 +15,33 @@ enum class Emote {
     }
 }
 
-/** How he moves while the emote plays. */
+/**
+ * How he moves while the emote plays.
+ *
+ * The first six are the plain ways of getting about. The rest are set pieces: they take him over
+ * for a few seconds and then hand him back to his ordinary drift. A pack naming one this app does
+ * not know falls back to [DRIFT], so new ones can ship in content ahead of the app that plays them.
+ */
 enum class Locomotion {
-    DRIFT, FLEE, APPROACH, PERCH_CORNER, ZOOMIES, STILL;
+    DRIFT, FLEE, APPROACH, PERCH_CORNER, ZOOMIES, STILL,
+
+    /** A slow tumble, head over hem, drifting gently sideways as he goes. */
+    ROLLOVER,
+
+    /** Hops along the floor, squashing on each landing, until the bounce runs out. */
+    BOUNCE,
+
+    /** A lazy loop around where he was standing. */
+    ORBIT,
+
+    /** Back and forth over a short stretch, like something waiting to be let in. */
+    PACE,
+
+    /** Slips to the nearest edge of the screen and runs along it. */
+    EDGE_SLIDE,
+
+    /** Ducks off the side of the screen, waits, and leans back in. */
+    PEEK;
 
     companion object {
         fun fromId(id: String?): Locomotion? =

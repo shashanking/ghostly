@@ -225,6 +225,12 @@ class GhostView(context: Context) : View(context) {
 
     // An extra wiggle-sway on top of the normal idle sway, for a happy little shimmy.
     private var wiggleUntil = 0f
+    private var rollFrom = 0f
+    private var rollUntil = 0f
+    private var rollTurns = 1f
+    private var squashFrom = 0f
+    private var squashUntil = 0f
+    private var squashAmount = 1f
 
     // Speech bubble text and when it should clear itself.
     private var bubbleText: String? = null
@@ -255,6 +261,9 @@ class GhostView(context: Context) : View(context) {
     }
 
     private fun bodyW(): Int = if (bodySizePx in 1 until width) bodySizePx else width
+
+    /** Top of his square inside a view of height [h]: the wash keeps the strip below it. */
+    private fun bodyTopFor(h: Float, w: Float): Float = (h - haloPadPx(w.toInt()) - w).coerceAtLeast(0f)
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -420,6 +429,23 @@ class GhostView(context: Context) : View(context) {
     }
 
     /** A brief extra shimmy on top of the usual idle sway — a happy little wiggle. */
+    /**
+     * A tumble: [turns] full rotations over [seconds], eased in and out so he tips over rather
+     * than spinning like a coin. Rides on top of his usual sway.
+     */
+    fun startRoll(seconds: Float, turns: Float = 1f) {
+        rollFrom = phase
+        rollUntil = phase + seconds.coerceAtLeast(0.3f)
+        rollTurns = turns
+    }
+
+    /** A quick squash and rebound — his weight arriving somewhere. */
+    fun squash(amount: Float = 1f) {
+        squashUntil = phase + 0.34f
+        squashFrom = phase
+        squashAmount = amount.coerceIn(0.2f, 1.4f)
+    }
+
     fun startWiggle() {
         wiggleUntil = phase + 1.2f
     }
@@ -515,6 +541,21 @@ class GhostView(context: Context) : View(context) {
         val sway = sin(phase * 1.35f) * 3.2f * (1f - fast) + wiggle
         val breath = 1f + sin(phase * 1.9f) * 0.022f
         // Irritated: a fast, tiny jitter — too quick to read as movement, just as unease.
+        // A tumble, eased at both ends so he tips over rather than spinning like a coin.
+        val roll = if (phase < rollUntil) {
+            val t = ((phase - rollFrom) / (rollUntil - rollFrom)).coerceIn(0f, 1f)
+            val eased = t * t * (3f - 2f * t)
+            eased * 360f * rollTurns
+        } else {
+            0f
+        }
+        // Landing weight: squat, then rebound past neutral before settling.
+        val squash = if (phase < squashUntil) {
+            val t = ((phase - squashFrom) / (squashUntil - squashFrom)).coerceIn(0f, 1f)
+            sin(t * kotlin.math.PI.toFloat()) * (1f - t) * 0.26f * squashAmount
+        } else {
+            0f
+        }
         val moodyShake = if (!asleep && mood == Mood.ANGRY) (sin(phase * 55f) + sin(phase * 71f)) * w * 0.004f else 0f
         // A confident/goofy puff of the whole silhouette.
         val puffScale = 1f + puffAmount * 0.22f
@@ -524,13 +565,18 @@ class GhostView(context: Context) : View(context) {
 
         canvas.save()
         canvas.translate(moodyShake + sideInset, bob)
-        canvas.rotate(sway + lean * 26f, w / 2f, h - w * 0.25f)
-        canvas.scale((1f - stretch) * breath * puffScale, (1f + stretch) * breath * puffScale, w / 2f, h)
+        canvas.rotate(sway + lean * 26f + roll, w / 2f, bodyTopFor(h, w) + w * 0.5f)
+        canvas.scale(
+            (1f - stretch + squash) * breath * puffScale,
+            (1f + stretch - squash) * breath * puffScale,
+            w / 2f,
+            bodyTopFor(h, w) + w
+        )
 
         // He is drawn in the bottom square of the view; any extra height above it is headroom for
         // the speech bubble, so a bubble never has to be squashed onto his crown.
         // His square sits above the halo's room, not flush with the bottom of the view.
-        val bodyTop = (h - haloPadPx(w.toInt()) - w).coerceAtLeast(0f)
+        val bodyTop = bodyTopFor(h, w)
         val pad = w * 0.10f
         val left = pad
         val right = w - pad

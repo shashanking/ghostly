@@ -1,6 +1,12 @@
 /** The same rules the app's loader applies — a pack that fails here never reaches a phone. */
 export const EMOTES = new Set(["GOOFY", "MOODY", "SPOOKED", "AFFECTION", "HUNGRY", "CONFIDENT", "HAPPY", "SLEEPY", "CURIOUS"]);
-export const LOCOMOTIONS = new Set(["DRIFT", "FLEE", "APPROACH", "PERCH_CORNER", "ZOOMIES", "STILL"]);
+export const LOCOMOTIONS = new Set([
+  // Plain ways of getting about.
+  "DRIFT", "FLEE", "APPROACH", "PERCH_CORNER", "ZOOMIES", "STILL",
+  // Set pieces: they take him over for a few seconds. An app too old to know one of these
+  // falls back to DRIFT, so they are safe to publish ahead of a release.
+  "ROLLOVER", "BOUNCE", "ORBIT", "PACE", "EDGE_SLIDE", "PEEK",
+]);
 export const BUBBLES = new Set(["sun", "moon", "star", "heart", "heart_broken", "fish", "bone", "food", "dash", "zzz", "note", "cloud", "rain", "sweat", "anger", "question", "sparkle", "bug", "ball", "yarn", "battery_low", "charging", "party", "eyes", "none"]);
 export const TIMES = new Set(["lateNight", "dawn", "morning", "afternoon", "evening", "night"]);
 export const SPECIES = ["ghost", "cat", "dog"];
