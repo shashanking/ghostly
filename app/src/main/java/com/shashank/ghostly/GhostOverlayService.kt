@@ -55,6 +55,10 @@ class GhostOverlayService : Service() {
     companion object {
         const val ACTION_START = "com.shashank.ghostly.START"
         const val ACTION_STOP = "com.shashank.ghostly.STOP"
+
+        /** He steps off the screen and into the box for a moment — see [setVisiting]. */
+        const val ACTION_VISIT = "com.shashank.ghostly.VISIT"
+        const val EXTRA_VISITING = "visiting"
         private const val CHANNEL_ID = "ghost_overlay"
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
@@ -80,6 +84,15 @@ class GhostOverlayService : Service() {
             private set
 
         /**
+         * True while he is in the app's box instead of over your apps. He is still floating —
+         * the service keeps running and the notification stays — he is simply not drawn out
+         * there, because there is only ever one of him and right now he is in the box.
+         */
+        @Volatile
+        var isVisiting: Boolean = false
+            private set
+
+        /**
          * Returns false when Android refused the start. From the foreground this always works; from
          * a broadcast it can be refused — `MY_PACKAGE_REPLACED` is not one of the exemptions for
          * starting a foreground service, and an unhandled refusal crashes the process.
@@ -88,6 +101,22 @@ class GhostOverlayService : Service() {
             val intent = Intent(context, GhostOverlayService::class.java).setAction(ACTION_START)
             context.startForegroundService(intent)
         }.isSuccess
+
+        /**
+         * Hides or restores the floating ghost without stopping the service, so feeding, playing
+         * and petting can happen in the box — where they belong — while he is out floating, and he
+         * drifts straight back out afterwards.
+         */
+        fun setVisiting(context: Context, visiting: Boolean) {
+            if (!isRunning) return
+            runCatching {
+                context.startService(
+                    Intent(context, GhostOverlayService::class.java)
+                        .setAction(ACTION_VISIT)
+                        .putExtra(EXTRA_VISITING, visiting)
+                )
+            }
+        }
 
         fun stop(context: Context) {
             runCatching {
@@ -333,13 +362,37 @@ class GhostOverlayService : Service() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
     }
 
+    /**
+     * Steps him off the screen and into the app's box, or brings him back out. The window stays
+     * added and the service stays in the foreground — only the drawing stops, so coming back is
+     * instant and none of his position or state is lost.
+     */
+    private fun setVisiting(visiting: Boolean) {
+        if (isVisiting == visiting) return
+        isVisiting = visiting
+        val view = root ?: return
+        if (visiting) {
+            view.visibility = android.view.View.GONE
+            stopLoop()
+        } else {
+            view.visibility = android.view.View.VISIBLE
+            startLoop()
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            isVisiting = false
             Prefs.setEnabled(this, false)
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_VISIT) {
+            setVisiting(intent.getBooleanExtra(EXTRA_VISITING, false))
+            return START_STICKY
         }
 
         if (!Settings.canDrawOverlays(this)) {
@@ -358,6 +411,7 @@ class GhostOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        isVisiting = false
         isRunning = false
         // Remember where he was, so he reappears in the same spot next time.
         if (root != null) Prefs.savePosition(this, posX, posY)

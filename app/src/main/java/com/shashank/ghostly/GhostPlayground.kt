@@ -33,7 +33,7 @@ class GhostPlayground @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
 
     private val density = resources.displayMetrics.density
-    private val size = (Prefs.sizeDp(context) * density).toInt()
+    private var size = (Prefs.sizeDp(context) * density).toInt()
     private val driftSpeed = 18f * density
     private val ghost = GhostView(context)
     private var driftAngle = Random.nextFloat() * 2f * PI.toFloat()
@@ -54,6 +54,12 @@ class GhostPlayground @JvmOverloads constructor(
      * "Call him home" brings him back. Drawing him in both places at once was the bug this fixes.
      */
     private var away = false
+
+    /**
+     * Touched while he is out floating. The box is his one place to be handled, so rather than
+     * ignoring the touch it asks whoever owns the box to bring him in for a moment.
+     */
+    var onSummon: (() -> Unit)? = null
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.parseColor("#3A3A46")
@@ -158,7 +164,35 @@ class GhostPlayground @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Re-reads his whole look — kind, shade and size — from what is stored. The box builds itself
+     * once and is then only shown and hidden, so without this a style chosen while he was out
+     * floating never reached the ghost who came home.
+     */
+    fun applyLook() {
+        setSpecies(Prefs.species(context))
+        setShade(Prefs.shade(context))
+        setGhostSize((Prefs.sizeDp(context) * density).toInt())
+    }
+
+    /** Resizes him in place, keeping him inside the box and centred on where he already was. */
+    fun setGhostSize(px: Int) {
+        if (px <= 0 || px == size) return
+        val cx = posX + size / 2f
+        val cy = posY + size / 2f
+        size = px
+        ghost.setBodySize(size)
+        ghost.layoutParams = LayoutParams(
+            size + GhostView.bubbleSidePx(density) * 2,
+            size + GhostView.headroomPx(density, size)
+        )
+        posX = (cx - size / 2f).coerceIn(0f, (width - size).coerceAtLeast(0).toFloat())
+        posY = (cy - size / 2f).coerceIn(0f, (height - size).coerceAtLeast(0).toFloat())
+        apply()
+    }
+
     fun setSpecies(species: Species) {
+        if (ghost.species == species) return
         ghost.species = species
         ghost.invalidate()
     }
@@ -239,7 +273,10 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (away) return false
+        if (away) {
+            if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) onSummon?.invoke()
+            return false
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lookAt(event.x, event.y)

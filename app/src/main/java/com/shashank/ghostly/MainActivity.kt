@@ -81,6 +81,15 @@ class MainActivity : Activity() {
     // Home
     private lateinit var playground: GhostPlayground
     private lateinit var moodLabel: TextView
+    private lateinit var hungerMeter: MeterView
+    private lateinit var energyMeter: MeterView
+    private lateinit var happinessMeter: MeterView
+    private lateinit var angerMeter: MeterView
+    private lateinit var temperColumn: LinearLayout
+
+    /** He is in the box for a moment while still being out on the overlay — see [visitBox]. */
+    private var visiting = false
+    private val returnToFloating = Runnable { endVisit() }
     private lateinit var hungerBar: ProgressBar
     private lateinit var energyBar: ProgressBar
     private lateinit var happinessBar: ProgressBar
@@ -156,6 +165,8 @@ class MainActivity : Activity() {
         // Leaving the app is the other one — his stats have just been changed by hand.
         ContentSync.schedule(this)
         primaryButton.removeCallbacks(stateWatcher)
+        // A visit is only a visit while you are here to watch it; otherwise he is out floating.
+        endVisit()
         super.onPause()
     }
 
@@ -317,6 +328,7 @@ class MainActivity : Activity() {
     }
 
     private fun showTab(tab: AppTab) {
+        if (tab != AppTab.HOME) endVisit()
         homePage.visibility = if (tab == AppTab.HOME) View.VISIBLE else View.GONE
         shopPage.visibility = if (tab == AppTab.SHOP) View.VISIBLE else View.GONE
         stylePage.visibility = if (tab == AppTab.STYLE) View.VISIBLE else View.GONE
@@ -341,6 +353,8 @@ class MainActivity : Activity() {
         }
 
         playground = GhostPlayground(this).apply {
+            // Reaching into the empty box while he is out is a way of asking for him.
+            onSummon = { visitBox() }
             background = rounded(card, dp(28).toFloat(), cardStroke)
             elevation = dp(3).toFloat()
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(348)).apply { topMargin = dp(4) }
@@ -367,11 +381,25 @@ class MainActivity : Activity() {
         angerBar = addNeedRow(hiddenNeeds, "Anger", IconGlyph.ANGER, angerRed)
         column.addView(hiddenNeeds)
 
+        // Hairline meters under his mood line: enough to see he is hungry, not enough to manage.
+        // Temper only appears when there is a temper to speak of.
+        val meters = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(20) }
+        }
+        hungerMeter = addMeterColumn(meters, "Fed")
+        energyMeter = addMeterColumn(meters, "Rested")
+        happinessMeter = addMeterColumn(meters, "Happy")
+        temperColumn = LinearLayout(this)
+        angerMeter = addMeterColumn(meters, "Temper", angerRed, temperColumn)
+        column.addView(meters)
+
         val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) }
         }
         val feed = quickActionButton("Feed", IconGlyph.HUNGER) {
+            visitBox()
             PetStats.feed(this@MainActivity)
             Prefs.markFed(this@MainActivity)
             pulse(hungerBar)
@@ -381,6 +409,7 @@ class MainActivity : Activity() {
         actionsRow.addView(feed.root)
 
         val play = quickActionButton("Play · ${Emotions.PLAY_COST}", IconGlyph.PLAY, leftMargin = true) {
+            visitBox()
             when (Emotions.playWithToken(this@MainActivity)) {
                 Emotions.PlayOutcome.SUCCESS -> {
                     refreshNeeds()
@@ -1141,6 +1170,38 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
     }
 
+    /**
+     * One hairline meter with a small caps label above it, as an equal-width column of [container].
+     * Pass [holder] to get a handle on the column itself, for the ones that come and go.
+     */
+    private fun addMeterColumn(
+        container: LinearLayout,
+        label: String,
+        tint: Int = Palette.bone,
+        holder: LinearLayout? = null
+    ): MeterView {
+        val column = (holder ?: LinearLayout(this)).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
+                if (container.childCount > 0) marginStart = dp(12)
+            }
+        }
+        column.addView(TextView(this).apply {
+            text = label.uppercase()
+            setTextColor(Palette.textFaint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            letterSpacing = 0.14f
+            typeface = uiMedium
+        })
+        val meter = MeterView(this).apply {
+            setTint(tint)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(7) }
+        }
+        column.addView(meter)
+        container.addView(column)
+        return meter
+    }
+
     private fun addNeedRow(container: LinearLayout, label: String, glyph: IconGlyph, tint: Int): ProgressBar {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1237,12 +1298,17 @@ class MainActivity : Activity() {
         val canOverlay = Settings.canDrawOverlays(this)
         val floating = GhostOverlayService.isRunning
         lastKnownRunning = floating
-        // One ghost: the box empties the moment he goes out, and refills when he comes home.
-        if (::playground.isInitialized) playground.setAway(floating)
+        // One ghost: the box empties the moment he goes out, and refills when he comes home —
+        // wearing whatever was chosen for him while he was away.
+        if (::playground.isInitialized) {
+            playground.applyLook()
+            playground.setAway(floating && !visiting)
+        }
 
-        statusLabel.visibility = if (canOverlay && floating) View.GONE else View.VISIBLE
+        statusLabel.visibility = if (canOverlay && floating && !visiting) View.GONE else View.VISIBLE
         statusLabel.text = when {
             !canOverlay -> "Ghostly needs the \"Display over other apps\" permission to leave this screen."
+            visiting -> "He's popped into the box — he drifts back out on his own."
             floating -> "Floating now — go open any app, he's still there."
             else -> "Ready when you are."
         }
@@ -1263,10 +1329,11 @@ class MainActivity : Activity() {
 
         blockedCard.visibility = if (canOverlay) View.GONE else View.VISIBLE
 
-        // Feeding and petting happen in the box, so they are unavailable while he is floating.
+        // Feeding, playing and petting always happen inside the box — that is the whole rule — but
+        // they no longer wait for him to be called home: tapping one brings him in for a moment.
         homeActionsRow?.let { row ->
-            row.alpha = if (floating) 0.35f else 1f
-            for (i in 0 until row.childCount) row.getChildAt(i).isEnabled = !floating
+            row.alpha = 1f
+            for (i in 0 until row.childCount) row.getChildAt(i).isEnabled = true
         }
 
         val currentSize = Prefs.sizeDp(this)
@@ -1295,13 +1362,19 @@ class MainActivity : Activity() {
         animateProgress(energyBar, s.body.energy.toInt())
         animateProgress(happinessBar, s.body.happiness.toInt())
         animateProgress(angerBar, s.anger.toInt())
+        hungerMeter.setValue(s.body.hunger / 100f)
+        energyMeter.setValue(s.body.energy / 100f)
+        happinessMeter.setValue(s.body.happiness / 100f)
+        angerMeter.setValue(s.anger / 100f)
+        // A calm ghost has no temper to show, so the column is simply not there.
+        temperColumn.visibility = if (s.anger >= SHOW_TEMPER_ABOVE) View.VISIBLE else View.GONE
         restLabel.text = if (s.body.sleeping) "Wake him up" else "Let him nap"
 
         val name = petName()
         // With the meters gone this line is the whole readout, so it says the most pressing thing
         // first: asleep, then angry, then hungry, then tired, then sad, then contentment.
         moodLabel.text = when {
-            GhostOverlayService.isRunning -> "somewhere over your apps"
+            GhostOverlayService.isRunning && !visiting -> "somewhere over your apps"
             s.body.sleeping -> "fast asleep"
             s.mood == Mood.ANGRY -> "cross with you — a gift might help"
             s.body.hunger < PetStats.HUNGRY_THRESHOLD -> "peckish, and looking at you"
@@ -1329,6 +1402,33 @@ class MainActivity : Activity() {
         runCatching { GhostlyWidgetProvider.refreshAll(this) }
     }
 
+    /**
+     * Brings him off the overlay and into the box for a moment so he can be fed, played with or
+     * petted — every one of which happens inside the box and nowhere else, floating or not. He
+     * goes back out on his own [VISIT_GRACE_MS] after the last thing you did to him.
+     *
+     * Does nothing when he is already home; then the box is simply where he lives.
+     */
+    private fun visitBox() {
+        if (!GhostOverlayService.isRunning) return
+        if (!visiting) {
+            visiting = true
+            GhostOverlayService.setVisiting(this, true)
+        }
+        primaryButton.removeCallbacks(returnToFloating)
+        primaryButton.postDelayed(returnToFloating, VISIT_GRACE_MS)
+        refreshState()
+    }
+
+    /** Ends a visit early — leaving Home, or leaving the app, sends him straight back out. */
+    private fun endVisit() {
+        if (!visiting) return
+        visiting = false
+        primaryButton.removeCallbacks(returnToFloating)
+        GhostOverlayService.setVisiting(this, false)
+        refreshState()
+    }
+
     private fun chooseSpecies(species: Species) {
         Prefs.setSpecies(this, species)
         playground.setSpecies(species)
@@ -1349,6 +1449,9 @@ class MainActivity : Activity() {
         }
 
         if (GhostOverlayService.isRunning) {
+            // Calling him home ends any visit: he is not popping in any more, he is staying.
+            visiting = false
+            primaryButton.removeCallbacks(returnToFloating)
             GhostOverlayService.stop(this)
         } else {
             GhostOverlayService.start(this)
@@ -1368,8 +1471,10 @@ class MainActivity : Activity() {
     }
 
     private fun chooseSize(sizeDp: Int) {
-        // The overlay's own prefs listener resizes it live, in place — no restart needed.
+        // The overlay's own prefs listener resizes it live, in place — no restart needed. The box
+        // has no such listener, so it is told directly.
         Prefs.setSizeDp(this, sizeDp)
+        playground.applyLook()
         refreshState()
     }
 
@@ -1398,6 +1503,12 @@ class MainActivity : Activity() {
     private companion object {
         const val WATCH_INTERVAL_MS = 1_000L
         const val WELCOME_BACK_GAP_MS = 12 * 60 * 60 * 1_000L
+
+        /** Below this he is simply calm, and the Temper meter is not shown at all. */
+        const val SHOW_TEMPER_ABOVE = 8f
+
+        /** How long he stays in the box after the last thing you did, before drifting back out. */
+        const val VISIT_GRACE_MS = 6_000L
     }
 
     // endregion
