@@ -65,7 +65,7 @@ class GhostView(context: Context) : View(context) {
          * How far the contrast wash reaches, as a fraction of his body width. Kept under the side
          * room above, so the wash is never cut off left or right either.
          */
-        const val HALO_RADIUS = 0.82f
+        const val HALO_RADIUS = 0.68f
 
         /** Where the wash is centred on him, down from the top of his square. */
         private const val HALO_CENTRE_Y = 0.46f
@@ -532,7 +532,9 @@ class GhostView(context: Context) : View(context) {
         val left = pad
         val right = w - pad
         val top = bodyTop + pad
-        val bottom = h - pad
+        // Bottom of HIS square, not of the view: the room below him belongs to the wash, and
+        // measuring down to the view's edge simply stretched his hem into it.
+        val bottom = bodyTop + w - pad
         val gw = right - left
         val r = gw / 2f
         val cx = left + r
