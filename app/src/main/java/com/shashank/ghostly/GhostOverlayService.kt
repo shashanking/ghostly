@@ -1642,11 +1642,13 @@ class GhostOverlayService : Service() {
         )
 
         val name = Prefs.displayName(this)
+        // Both of these used to talk about tapping him. Taps go straight through him now — the
+        // app's box is the only place he can be handled — so the notification says so.
         val (title, text) = when {
-            sleeping -> "$name is napping" to "He's resting. Wake him with a tap, or Stop to send him away."
+            sleeping -> "$name is napping" to "Open Ghostly to wake him, or Stop to send him away."
             mood == Mood.ANGRY -> "$name is upset with you" to "He's been neglected too long — a gift would help."
-            mood == Mood.SAD -> "$name is floating" to "He's a little down today."
-            else -> "$name is floating" to "Tap him and he runs away."
+            mood == Mood.SAD -> "$name is floating" to "He's a little down today. Open Ghostly and say hello."
+            else -> "$name is floating" to "Drifting over your apps. Stop to send him home."
         }
 
         return Notification.Builder(this, CHANNEL_ID)
