@@ -842,18 +842,43 @@ class MainActivity : Activity() {
         column.addView(shareRow)
 
         column.addView(sectionLabel("Account"))
-        val email = Prefs.userEmail(this)
-        column.addView(TextView(this).apply {
-            text = if (email != null) "Signed in as $email" else "Not signed in — the pet lives only on this phone."
+        // The settings page is built once and only shown and hidden, so signing in has to be able
+        // to rewrite this section afterwards rather than leaving it saying "Not signed in".
+        accountStatus = TextView(this).apply {
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
-        })
+        }
+        column.addView(accountStatus)
+        accountActions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        column.addView(accountActions)
+        refreshAccountSection()
+
+        column.addView(sectionLabel("Trouble"))
+        column.addView(settingsRowButton("Permission blocked by Android?", null) { openAppInfo() })
+
+        scroll.addView(column)
+        return scroll
+    }
+
+    private var accountStatus: TextView? = null
+    private var accountActions: LinearLayout? = null
+
+    /** Re-renders the Account section from whatever is stored now. Safe to call any number of times. */
+    private fun refreshAccountSection() {
+        val actions = accountActions ?: return
+        val email = Prefs.userEmail(this)
+        accountStatus?.text =
+            if (email != null) "Signed in as $email" else "Not signed in — the pet lives only on this phone."
+        actions.removeAllViews()
         if (email != null) {
-            column.addView(settingsRowButton("Delete my account and server data", null) { confirmDeleteAccount() })
+            actions.addView(settingsRowButton("Delete my account and server data", null) { confirmDeleteAccount() })
         } else {
-            column.addView(settingsRowButton("Sign in with Google", null) { signInFromSettings() })
-            column.addView(TextView(this).apply {
+            actions.addView(settingsRowButton("Sign in with Google", null) { signInFromSettings() })
+            actions.addView(TextView(this).apply {
                 text = "Signing in keeps your ghost if you change phone, and keeps his token " +
                     "balance honest. He works exactly the same without it."
                 setTextColor(Palette.textFaint)
@@ -862,12 +887,6 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) }
             })
         }
-
-        column.addView(sectionLabel("Trouble"))
-        column.addView(settingsRowButton("Permission blocked by Android?", null) { openAppInfo() })
-
-        scroll.addView(column)
-        return scroll
     }
 
     /** The same Credential Manager flow onboarding uses, reachable for anyone who skipped it. */
@@ -1214,6 +1233,7 @@ class MainActivity : Activity() {
     // region state
 
     private fun refreshState() {
+        refreshAccountSection()
         val canOverlay = Settings.canDrawOverlays(this)
         val floating = GhostOverlayService.isRunning
         lastKnownRunning = floating
