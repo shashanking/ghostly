@@ -153,6 +153,14 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
 
+        // Tapping the "ready to install" notification lands here and finishes the job.
+        if (intent?.action == ACTION_FINISH_UPDATE) {
+            intent.action = null
+            AppUpdates.clearNotification(this)
+            AppUpdates.complete(this)
+        }
+        AppUpdates.check(this) { start -> offerUpdate(start) }
+
         val previousOpen = Prefs.lastOpenedAt(this)
         val now = System.currentTimeMillis()
         Prefs.saveLastOpenedAt(this, now)
@@ -174,10 +182,11 @@ class MainActivity : Activity() {
         primaryButton.removeCallbacks(stateWatcher)
         // A visit is only a visit while you are here to watch it; otherwise he is out floating.
         endVisit()
+        AppUpdates.release(this)
         super.onPause()
     }
 
-    private fun petName(): String = Prefs.name(this) ?: Prefs.species(this).label
+    private fun petName(): String = Prefs.displayName(this)
 
     /**
      * Android 16 (API 36) draws every app edge to edge with no opt-out: the HUD keeps the status
@@ -255,14 +264,14 @@ class MainActivity : Activity() {
             setBackgroundColor(ink)
             elevation = dp(4).toFloat()
         }
-        nameLabel = TextView(this).apply {
+        // The bar carries the app, not the pet: his name belongs next to him, on Home.
+        bar.addView(TextView(this).apply {
+            text = getString(R.string.app_name)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
             typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
-            setOnClickListener { showRenameDialog() }
-        }
-        bar.addView(nameLabel)
+        })
 
         val (streakChip, streakText) = hudChip(IconGlyph.ANGER, accent)
         streakChipText = streakText
@@ -368,13 +377,25 @@ class MainActivity : Activity() {
         }
         column.addView(playground)
 
+        // His name, right under him, and tapping it renames him.
+        nameLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            typeface = serifFace
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(14) }
+            setOnClickListener { showRenameDialog() }
+        }
+        column.addView(nameLabel)
+
         // How he is, said in his own voice rather than drawn as four bars.
         moodLabel = TextView(this).apply {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
             typeface = serifItalicFace
             gravity = android.view.Gravity.CENTER_HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(2) }
         }
         column.addView(moodLabel)
 
@@ -965,7 +986,7 @@ class MainActivity : Activity() {
      * server copy (account, pets, history) is removed.
      */
     private fun confirmDeleteAccount() {
-        android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
             .setTitle("Delete your account?")
             .setMessage(
                 "This removes your account and everything saved on the server: your pets, their " +
@@ -1129,20 +1150,40 @@ class MainActivity : Activity() {
         manager.requestPinAppWidget(ComponentName(this, GhostlyWidgetProvider::class.java), null, null)
     }
 
+    /**
+     * A new Ghostly is on Play. Offered rather than imposed: it downloads in the background while
+     * you carry on, and the notification picks it up if you leave before it lands.
+     */
+    private fun offerUpdate(start: () -> Unit) {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
+            .setTitle("A new Ghostly")
+            .setMessage(
+                "There's a newer version on the Play Store. It downloads in the background — " +
+                    "he keeps floating while it does."
+            )
+            .setNegativeButton("Not now") { _, _ -> AppUpdates.snooze(this) }
+            .setPositiveButton("Update") { _, _ -> start() }
+            .show()
+    }
+
     private fun showRenameDialog() {
         val input = EditText(this).apply {
             setText(Prefs.name(this@MainActivity) ?: "")
-            hint = Prefs.species(this@MainActivity).label
+            hint = "Ghostly"
             setTextColor(Color.WHITE)
             setHintTextColor(dim)
             setSingleLine()
+            filters = arrayOf(android.text.InputFilter.LengthFilter(18))
+            setPadding(dp(24), dp(12), dp(24), dp(12))
         }
-        AlertDialog.Builder(this)
-            .setTitle("Name him")
+        AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
+            .setTitle("What's his name?")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 Prefs.setName(this, input.text.toString())
                 refreshNeeds()
+                runCatching { GhostlyWidgetProvider.refreshAll(this) }
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -1389,7 +1430,8 @@ class MainActivity : Activity() {
             s.body.happiness > 85f -> "delighted with everything"
             else -> "content, and watching you"
         }
-        nameLabel.text = name
+        nameLabel.text = if (Prefs.name(this) == null) "Tap to name him" else name
+        nameLabel.setTextColor(if (Prefs.name(this) == null) dim else Color.WHITE)
 
         val streak = Prefs.streak(this)
         streakChipText.text = streak.toString()
@@ -1582,21 +1624,24 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
-        const val WATCH_INTERVAL_MS = 1_000L
-        const val WELCOME_BACK_GAP_MS = 12 * 60 * 60 * 1_000L
+    companion object {
+        /** The update notification opens straight into finishing the install. */
+        const val ACTION_FINISH_UPDATE = "com.shashank.ghostly.FINISH_UPDATE"
+
+        private const val WATCH_INTERVAL_MS = 1_000L
+        private const val WELCOME_BACK_GAP_MS = 12 * 60 * 60 * 1_000L
 
         /** Below this he is simply calm, and the Temper meter is not shown at all. */
-        const val SHOW_TEMPER_ABOVE = 8f
+        private const val SHOW_TEMPER_ABOVE = 8f
 
         /** How long he stays in the box after the last thing you did, before drifting back out. */
-        const val VISIT_GRACE_MS = 6_000L
+        private const val VISIT_GRACE_MS = 6_000L
 
         /** Long enough for the two to cross-dissolve on the same spot before the overlay lets go. */
-        const val HANDOVER_OVERLAP_MS = 210L
+        private const val HANDOVER_OVERLAP_MS = 210L
 
         /** A hand-off that never completes must not leave the screen stuck mid-move. */
-        const val HANDOVER_TIMEOUT_MS = 3_000L
+        private const val HANDOVER_TIMEOUT_MS = 3_000L
     }
 
     // endregion

@@ -8,4 +8,14 @@
         <item name="android:fontFamily">@font/space_grotesk</item>
         <item name="android:textColor">#F2F2F4</item>
     </style>
+
+    <!-- Dialogs in the app's own voice: the same near-black glass, bone text, no stock grey. -->
+    <style name="Theme.Ghostly.Dialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_bg</item>
+        <item name="android:colorAccent">#F2F2F4</item>
+        <item name="android:textColorPrimary">#F2F2F4</item>
+        <item name="android:textColorSecondary">#8C8C99</item>
+        <item name="android:textColorAlertDialogListItem">#F2F2F4</item>
+        <item name="android:fontFamily">@font/space_grotesk</item>
+    </style>
 </resources>

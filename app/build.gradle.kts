@@ -69,4 +69,7 @@ dependencies {
     // are plain Activities (not ComponentActivity), so lifecycleScope isn't available — a small
     // manually-managed CoroutineScope needs this instead.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Play in-app updates: the only way to know a newer build is live on Play and to install it
+    // without sending the user out to the store listing.
+    implementation("com.google.android.play:app-update:2.1.0")
 }

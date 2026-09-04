@@ -31,6 +31,7 @@ object Prefs {
     private const val KEY_STREAK_DAY = "streak_day"
     private const val KEY_LAST_OPENED_AT = "last_opened_at"
     private const val KEY_NAME = "name"
+    private const val KEY_UPDATE_PROMPTED_AT = "update_prompted_at"
     private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
     private const val KEY_USER_EMAIL = "user_email"
     private const val KEY_USER_DISPLAY_NAME = "user_display_name"
@@ -183,6 +184,18 @@ object Prefs {
 
     /** Null until the user picks one — callers fall back to the species label. */
     fun name(context: Context): String? = prefs(context).getString(KEY_NAME, null)
+
+    /**
+     * What to call him on screen. Unnamed he goes by the app's own name rather than by what he is
+     * — "Ghostly is floating" reads like a pet; "Dog ghost is floating" reads like a product.
+     */
+    fun displayName(context: Context): String = name(context) ?: "Ghostly"
+
+    /** When the update offer was last put in front of the user, so it isn't put there daily. */
+    fun updatePromptedAt(context: Context) = prefs(context).getLong(KEY_UPDATE_PROMPTED_AT, 0L)
+
+    fun saveUpdatePromptedAt(context: Context, at: Long) =
+        prefs(context).edit().putLong(KEY_UPDATE_PROMPTED_AT, at).apply()
 
     fun setName(context: Context, name: String?) =
         prefs(context).edit().putString(KEY_NAME, name?.trim()?.take(18)?.ifEmpty { null }).apply()

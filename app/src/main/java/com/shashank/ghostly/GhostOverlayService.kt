@@ -1344,7 +1344,7 @@ class GhostOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val name = Prefs.name(this) ?: Prefs.species(this).label
+        val name = Prefs.displayName(this)
         val (title, text) = when {
             sleeping -> "$name is napping" to "He's resting. Wake him with a tap, or Stop to send him away."
             mood == Mood.ANGRY -> "$name is upset with you" to "He's been neglected too long — a gift would help."

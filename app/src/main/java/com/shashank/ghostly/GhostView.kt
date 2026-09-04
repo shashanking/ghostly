@@ -43,7 +43,15 @@ class GhostView(context: Context) : View(context) {
         const val BUBBLE_PAD_X_DP = 6f
         const val BUBBLE_PAD_Y_DP = 4f
 
-        /** Headroom in pixels: proportional for a big ghost, but never less than a bubble needs. */
+        /** The little spike under the bubble, pointing back down at him. */
+        const val BUBBLE_TAIL_DP = 7f
+
+        /** Clear air between the tip of the tail and the top of his head. */
+        const val BUBBLE_LIFT_DP = 4f
+
+        /** What a bubble needs vertically: its own height, its tail, and the gap above his crown. */
+        private val bubbleStackDp = BUBBLE_TEXT_DP + BUBBLE_PAD_Y_DP * 2f + BUBBLE_TAIL_DP + BUBBLE_LIFT_DP
+
         /**
          * Room on EACH side of his body square, so the fixed-size bubble has somewhere to sit.
          * Without it the view is exactly as wide as he is and a bubble wider than a small ghost
@@ -53,8 +61,9 @@ class GhostView(context: Context) : View(context) {
 
         fun bubbleSidePx(density: Float): Int = (BUBBLE_SIDE_DP * density).toInt()
 
+        /** Headroom in pixels: proportional for a big ghost, but never less than a bubble needs. */
         fun headroomPx(density: Float, ghostPx: Int): Int =
-            maxOf(ghostPx * BUBBLE_HEADROOM, 30f * density).toInt()
+            maxOf(ghostPx * BUBBLE_HEADROOM, (bubbleStackDp + 2f) * density).toInt()
     }
 
     /** How solid the body is. Low enough to read as a ghost, high enough to see on a busy screen. */
@@ -257,17 +266,23 @@ class GhostView(context: Context) : View(context) {
         val w = bodyW()
         val h = height
         if (w <= 0 || h <= 0) return
-        val cxv = width / 2f
+        // His own square's centre, not the view's: onDraw shifts the canvas across by the side room
+        // before any of this is painted, so a shader built around the view centre lands off to one
+        // side of him — which is what put a dark smudge beside a pale ghost.
+        val cxv = w / 2f
         // Centred on his body, not on the view: the view carries bubble headroom above him.
         val glowCy = (h - w).coerceAtLeast(0) + w * 0.46f
         // A pale ghost vanishes on a white wallpaper and a dark one vanishes on a black desk, so he
         // carries the opposite of himself as a soft halo. On a background where it is not needed it
         // simply cannot be seen.
         val haloRgb = (if (shade == Shade.INK) 0xFFFFFF else 0x000000)
+        // Densest behind him and fading outward the whole way — a wash on the background, not a
+        // ring. Peaking it partway out drew a bright edge that hugged his silhouette and read as a
+        // border, which is not what a spread behind him is meant to look like.
         contrastHaloPaint.shader = RadialGradient(
-            cxv, glowCy, w * 0.62f,
-            intArrayOf((0x00 shl 24) or haloRgb, (0x2E shl 24) or haloRgb, (0x00 shl 24) or haloRgb),
-            floatArrayOf(0.30f, 0.62f, 1f),
+            cxv, glowCy, w * 0.92f,
+            intArrayOf((0x30 shl 24) or haloRgb, (0x16 shl 24) or haloRgb, (0x00 shl 24) or haloRgb),
+            floatArrayOf(0f, 0.46f, 1f),
             Shader.TileMode.CLAMP
         )
         val glowRgb = rehued(Color.parseColor("#67E8FF")) and 0x00FFFFFF
@@ -532,7 +547,7 @@ class GhostView(context: Context) : View(context) {
         bodyPath.close()
 
         val angry = !asleep && mood == Mood.ANGRY
-        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.62f, contrastHaloPaint)
+        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.92f, contrastHaloPaint)
         canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
         // Ears are drawn before the body: whatever falls inside the dome gets painted over, leaving
         // only the tip poking out — which is what makes them read as attached to the head.
@@ -833,11 +848,14 @@ class GhostView(context: Context) : View(context) {
         val lo = edgeLeft + 2f - locOnScreen[0] - sideInsetLocal + bw / 2f
         val hi = edgeRight - 2f - locOnScreen[0] - sideInsetLocal - bw / 2f
         if (hi > lo) bcx = bcx.coerceIn(lo, hi)
-        val bcy = (top - bh * 0.62f).coerceAtLeast(bh / 2f + 1f)
+        // Measured up from his crown, not down from the bubble: the tail hangs below the bubble,
+        // and sizing it from the bubble's own height put the tail — and on a small ghost the
+        // bubble with it — down on top of his head.
+        val tail = BUBBLE_TAIL_DP * density
+        val bcy = (top - BUBBLE_LIFT_DP * density - tail - bh / 2f).coerceAtLeast(bh / 2f + 1f)
         rect.set(bcx - bw / 2f, bcy - bh / 2f, bcx + bw / 2f, bcy + bh / 2f)
         canvas.drawRoundRect(rect, bh * 0.42f, bh * 0.42f, bubbleBgPaint)
         earPath.reset()
-        val tail = 7f * density
         earPath.moveTo(bcx - tail * 0.7f, bcy + bh / 2f - 1f)
         earPath.lineTo(bcx - tail * 1.3f, bcy + bh / 2f + tail)
         earPath.lineTo(bcx + tail * 0.2f, bcy + bh / 2f - 1f)

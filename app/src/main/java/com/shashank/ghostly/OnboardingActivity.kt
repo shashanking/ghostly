@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -79,6 +80,9 @@ class OnboardingActivity : Activity() {
 
     private lateinit var root: FrameLayout
     private var currentStep = Step.SPLASH
+
+    /** Only alive while the avatar step is on screen. */
+    private var nameField: EditText? = null
     private var selectedSpecies = Species.GHOST
     private val speciesCards = mutableListOf<Pair<Species, LinearLayout>>()
     private val idleCallbacks = mutableListOf<Choreographer.FrameCallback>()
@@ -373,7 +377,7 @@ class OnboardingActivity : Activity() {
             typeface = serifFace
         })
         column.addView(TextView(this).apply {
-            text = "You can change this later in Style."
+            text = "You can change all of this later in Style."
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
@@ -390,6 +394,32 @@ class OnboardingActivity : Activity() {
         }
         column.addView(row)
 
+        // Naming him is what turns a floating shape into someone's ghost, so it sits right here
+        // with the choice of what he is. Left blank he is simply "Ghost", and can be named later.
+        column.addView(TextView(this).apply {
+            text = "AND HIS NAME"
+            setTextColor(Palette.textFaint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            letterSpacing = 0.16f
+            typeface = uiMedium
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(26) }
+        })
+        nameField = EditText(this).apply {
+            hint = "Give him a name"
+            setHintTextColor(Palette.textFaint)
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = serifFace
+            isSingleLine = true
+            filters = arrayOf(android.text.InputFilter.LengthFilter(18))
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            background = roundedField()
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setText(Prefs.name(this@OnboardingActivity).orEmpty())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
+        }
+        column.addView(nameField)
+
         column.addView(Button(this).apply {
             text = "Continue"
             isAllCaps = false
@@ -401,12 +431,20 @@ class OnboardingActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(56)).apply { topMargin = dp(28) }
             setOnClickListener {
                 Prefs.setSpecies(this@OnboardingActivity, selectedSpecies)
+                Prefs.setName(this@OnboardingActivity, nameField?.text?.toString())
                 goTo(Step.PERMISSIONS)
             }
             addPressBounce(this)
         })
 
         return ScrollView(this).apply { addView(column) }
+    }
+
+    /** The one text input in the app: a glass card, same shape as everything else. */
+    private fun roundedField(): GradientDrawable = GradientDrawable().apply {
+        setColor(Palette.glass)
+        cornerRadius = dp(16).toFloat()
+        setStroke(dp(1), Palette.glassStroke)
     }
 
     private fun buildSpeciesCard(species: Species, leftMargin: Boolean): LinearLayout {

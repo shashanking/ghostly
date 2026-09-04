@@ -49,7 +49,7 @@ class GhostlyWidgetProvider : AppWidgetProvider() {
         }
 
         private fun statusText(context: Context): String {
-            val name = Prefs.name(context) ?: Prefs.species(context).label
+            val name = Prefs.displayName(context)
             val s = Emotions.snapshot(context)
             return when {
                 s.body.sleeping -> "$name is napping"
