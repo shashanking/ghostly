@@ -59,6 +59,17 @@ class GhostOverlayService : Service() {
         /** He steps off the screen and into the box for a moment — see [setVisiting]. */
         const val ACTION_VISIT = "com.shashank.ghostly.VISIT"
         const val EXTRA_VISITING = "visiting"
+
+        /** He flies to a point on screen and waits there — see [comeHome]. */
+        const val ACTION_COME_HOME = "com.shashank.ghostly.COME_HOME"
+
+        /**
+         * Where his body's top-left should be, in screen pixels. Carried on a start, on the end of
+         * a visit and on [ACTION_COME_HOME], so that he appears exactly where the app last drew
+         * him instead of popping into being somewhere else.
+         */
+        const val EXTRA_BODY_X = "bodyX"
+        const val EXTRA_BODY_Y = "bodyY"
         private const val CHANNEL_ID = "ghost_overlay"
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
@@ -72,6 +83,12 @@ class GhostOverlayService : Service() {
 
         /** At or above this, he reads as brimming with energy: quicker, puffed, a little arrogant. */
         private const val ENERGY_FULL_THRESHOLD = 90f
+
+        /** Long enough to read as a dissolve, short enough that he is never missing. */
+        private const val FADE_MS = 170L
+
+        /** Longer than any flight across a screen; a cap, not a schedule. */
+        private const val HOMING_TIMEOUT_SECONDS = 4f
 
         private const val PET_HOLD_MS = 1_000L
         private const val PET_ANIMATION_MS = 2_000L
@@ -92,29 +109,66 @@ class GhostOverlayService : Service() {
         var isVisiting: Boolean = false
             private set
 
+        /** His body's top-left on screen right now, so the app can pick him up where he is. */
+        @Volatile
+        var bodyX: Float = 0f
+            private set
+
+        @Volatile
+        var bodyY: Float = 0f
+            private set
+
+        /** Set once he has reached the point [comeHome] sent him to. */
+        @Volatile
+        var arrivedHome: Boolean = false
+            private set
+
         /**
          * Returns false when Android refused the start. From the foreground this always works; from
          * a broadcast it can be refused — `MY_PACKAGE_REPLACED` is not one of the exemptions for
          * starting a foreground service, and an unhandled refusal crashes the process.
          */
-        fun start(context: Context): Boolean = runCatching {
+        fun start(context: Context, bodyX: Float? = null, bodyY: Float? = null): Boolean = runCatching {
             val intent = Intent(context, GhostOverlayService::class.java).setAction(ACTION_START)
+            if (bodyX != null && bodyY != null) {
+                intent.putExtra(EXTRA_BODY_X, bodyX).putExtra(EXTRA_BODY_Y, bodyY)
+            }
             context.startForegroundService(intent)
         }.isSuccess
+
+        /**
+         * Sends him flying to a point on screen — the middle of the app's box — and sets
+         * [arrivedHome] when he gets there. The app waits for that before taking him over, so he
+         * travels home instead of blinking out of one place and into another.
+         */
+        fun comeHome(context: Context, bodyX: Float, bodyY: Float) {
+            if (!isRunning) return
+            arrivedHome = false
+            runCatching {
+                context.startService(
+                    Intent(context, GhostOverlayService::class.java)
+                        .setAction(ACTION_COME_HOME)
+                        .putExtra(EXTRA_BODY_X, bodyX)
+                        .putExtra(EXTRA_BODY_Y, bodyY)
+                )
+            }
+        }
 
         /**
          * Hides or restores the floating ghost without stopping the service, so feeding, playing
          * and petting can happen in the box — where they belong — while he is out floating, and he
          * drifts straight back out afterwards.
          */
-        fun setVisiting(context: Context, visiting: Boolean) {
+        fun setVisiting(context: Context, visiting: Boolean, bodyX: Float? = null, bodyY: Float? = null) {
             if (!isRunning) return
             runCatching {
-                context.startService(
-                    Intent(context, GhostOverlayService::class.java)
-                        .setAction(ACTION_VISIT)
-                        .putExtra(EXTRA_VISITING, visiting)
-                )
+                val intent = Intent(context, GhostOverlayService::class.java)
+                    .setAction(ACTION_VISIT)
+                    .putExtra(EXTRA_VISITING, visiting)
+                if (bodyX != null && bodyY != null) {
+                    intent.putExtra(EXTRA_BODY_X, bodyX).putExtra(EXTRA_BODY_Y, bodyY)
+                }
+                context.startService(intent)
             }
         }
 
@@ -159,6 +213,14 @@ class GhostOverlayService : Service() {
      * window manager is wider, and it is pushed left by this much to keep him where he was.
      */
     private var sidePx = 0
+
+    /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
+    private var homing = false
+    private var homingToX = 0f
+    private var homingToY = 0f
+
+    /** A flight that never lands — the app died mid-hand-off — must not strand him hovering. */
+    private var homingUntil = 0f
 
     // What the window was last resized/retinted to, so the prefs listener only touches the
     // window when the size or colour actually changed rather than on every stat tick.
@@ -357,6 +419,22 @@ class GhostOverlayService : Service() {
         ghost?.invalidate()
     }
 
+    /** Body top-left in screen pixels, as carried on an intent — null when it wasn't. */
+    private fun Intent.bodyPoint(): Pair<Float, Float>? {
+        if (!hasExtra(EXTRA_BODY_X) || !hasExtra(EXTRA_BODY_Y)) return null
+        return getFloatExtra(EXTRA_BODY_X, 0f) to getFloatExtra(EXTRA_BODY_Y, 0f)
+    }
+
+    /** Puts his body's top-left at a screen point, clamped to where he is allowed to be. */
+    private fun placeBodyAt(x: Float, y: Float) {
+        posX = x
+        posY = y - headroomPx
+        velX = 0f
+        velY = 0f
+        clampIntoBounds()
+        applyPosition()
+    }
+
     private fun stopLoop() {
         looping = false
         Choreographer.getInstance().removeFrameCallback(frameCallback)
@@ -372,10 +450,13 @@ class GhostOverlayService : Service() {
         isVisiting = visiting
         val view = root ?: return
         if (visiting) {
-            view.visibility = android.view.View.GONE
-            stopLoop()
+            view.animate().alpha(0f).setDuration(FADE_MS).withEndAction {
+                if (isVisiting) view.visibility = android.view.View.GONE
+                stopLoop()
+            }.start()
         } else {
             view.visibility = android.view.View.VISIBLE
+            view.animate().alpha(1f).setDuration(FADE_MS).start()
             startLoop()
         }
     }
@@ -391,7 +472,22 @@ class GhostOverlayService : Service() {
         }
 
         if (intent?.action == ACTION_VISIT) {
-            setVisiting(intent.getBooleanExtra(EXTRA_VISITING, false))
+            val visiting = intent.getBooleanExtra(EXTRA_VISITING, false)
+            // Coming back out, he reappears exactly where the box was drawing him.
+            if (!visiting) intent.bodyPoint()?.let { (x, y) -> placeBodyAt(x, y) }
+            setVisiting(visiting)
+            return START_STICKY
+        }
+
+        if (intent?.action == ACTION_COME_HOME) {
+            intent.bodyPoint()?.let { (x, y) ->
+                homingToX = x
+                homingToY = y - headroomPx
+                homing = true
+                homingUntil = clock + HOMING_TIMEOUT_SECONDS
+                arrivedHome = false
+                startLoop()
+            }
             return START_STICKY
         }
 
@@ -401,7 +497,13 @@ class GhostOverlayService : Service() {
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
-        if (root == null) attachGhost() else startLoop()
+        val spawn = intent?.bodyPoint()
+        if (root == null) {
+            attachGhost(spawn)
+        } else {
+            spawn?.let { (x, y) -> placeBodyAt(x, y) }
+            startLoop()
+        }
         Prefs.setEnabled(this, true)
         // If the system ever kills us off — Samsung's battery manager is fond of it — this brings
         // him back without the user having to open the app.
@@ -436,7 +538,7 @@ class GhostOverlayService : Service() {
 
     // region setup
 
-    private fun attachGhost() {
+    private fun attachGhost(spawn: Pair<Float, Float>? = null) {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         density = resources.displayMetrics.density
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
@@ -490,14 +592,23 @@ class GhostOverlayService : Service() {
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
         }
 
-        posX = Prefs.lastX(this, bounds.width() * 0.72f)
-        posY = Prefs.lastY(this, bounds.height() * 0.35f)
+        // Sent out from the box, he starts exactly where the box was drawing him, so the hand-off
+        // between the two is invisible: same ghost, same spot, and only then does he drift off.
+        if (spawn != null) {
+            posX = spawn.first
+            posY = spawn.second - headroomPx
+        } else {
+            posX = Prefs.lastX(this, bounds.width() * 0.72f)
+            posY = Prefs.lastY(this, bounds.height() * 0.35f)
+        }
         clampIntoBounds()
         params.x = posX.toInt() - sidePx
         params.y = posY.toInt()
 
         container.setOnTouchListener { _, event -> onGhostTouch(event) }
+        container.alpha = 0f
         windowManager.addView(container, params)
+        container.animate().alpha(1f).setDuration(FADE_MS).start()
 
         isRunning = true
         registerReceiver(
@@ -1022,6 +1133,11 @@ class GhostOverlayService : Service() {
             refreshMood()
         }
 
+        if (homing) {
+            tickHoming(dt)
+            return
+        }
+
         if (feedState != FeedState.NONE) {
             tickFeeding(dt)
             return
@@ -1171,6 +1287,39 @@ class GhostOverlayService : Service() {
     }
 
     /** Falls to a landing spot, then he sprints over and eats — see [triggerFeeding]. */
+    /**
+     * The flight home. He eases towards the point the app named and stops there, and nothing else —
+     * drift, flourishes, the behaviour engine — gets a say until he lands. [arrivedHome] is what
+     * the app waits on before it takes him over, so the hand-off happens with him already in place.
+     */
+    private fun tickHoming(dt: Float) {
+        val view = ghost ?: return
+        val dx = homingToX - posX
+        val dy = homingToY - posY
+        val dist = hypot(dx, dy)
+        if (dist < 4f || clock > homingUntil) {
+            posX = homingToX
+            posY = homingToY
+            velX = 0f
+            velY = 0f
+            view.setMotion(0f, 0f)
+            applyPosition()
+            homing = false
+            arrivedHome = true
+            return
+        }
+        // Fast, but eased, so he arrives settling rather than slamming into place.
+        val speed = (dist * 4.5f).coerceIn(driftSpeed * 6f, driftSpeed * 34f)
+        val settle = 1f - exp(-9f * dt)
+        velX += (dx / dist * speed - velX) * settle
+        velY += (dy / dist * speed - velY) * settle
+        posX += velX * dt
+        posY += velY * dt
+        view.setMotion(velX, velY)
+        view.lookAt(dx / dist, dy / dist)
+        applyPosition()
+    }
+
     private fun tickFeeding(dt: Float) {
         val view = ghost ?: return
         when (feedState) {
@@ -1273,6 +1422,8 @@ class GhostOverlayService : Service() {
         lastAppliedY = ny
         params.x = nx - sidePx
         params.y = ny
+        bodyX = posX
+        bodyY = posY + headroomPx
         runCatching { windowManager.updateViewLayout(view, params) }
     }
 

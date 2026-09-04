@@ -151,18 +151,73 @@ class GhostPlayground @JvmOverloads constructor(
     fun setAway(value: Boolean) {
         if (away == value) return
         away = value
-        ghost.visibility = if (value) INVISIBLE else VISIBLE
-        if (!value) {
-            // He comes home to the middle of the box rather than wherever he was left.
-            posX = (width - size) / 2f
-            posY = (height - size) / 2f
+        if (value) {
+            // He has just been handed to the overlay, which is already drawing him in this exact
+            // spot — so this fades out under him rather than blinking him away.
+            ghost.animate().alpha(0f).setDuration(HANDOVER_MS).withEndAction {
+                if (away) ghost.visibility = INVISIBLE
+            }.start()
+        } else {
+            // He comes home to the middle of the box unless he was placed somewhere first.
+            if (!entryPlaced) {
+                posX = (width - size) / 2f
+                posY = (height - size) / 2f
+            }
+            entryPlaced = false
             velX = 0f
             velY = 0f
             apply()
+            ghost.animate().cancel()
+            ghost.visibility = VISIBLE
+            // Dissolves in rather than appearing: the overlay is dissolving out on this same spot,
+            // and their idle bobs are not in step, so a hard swap would show him twice for a frame.
+            ghost.alpha = 0f
+            ghost.animate().alpha(1f).setDuration(HANDOVER_MS).start()
             resume()
         }
         invalidate()
     }
+
+    /** Set when [placeBodyAtScreen] has already chosen where he lands, so [setAway] leaves it. */
+    private var entryPlaced = false
+
+    /**
+     * Holds him exactly where he is for a hand-off. He would otherwise keep drifting during the
+     * moment it takes the overlay window to come up, and lift off from where he used to be.
+     */
+    fun holdStill() {
+        velX = 0f
+        velY = 0f
+        pause()
+    }
+
+    /** His body's top-left in screen pixels — what the overlay needs to pick him up mid-flow. */
+    fun bodyScreenPos(): FloatArray {
+        getLocationOnScreen(locOnScreen)
+        return floatArrayOf(locOnScreen[0] + posX, locOnScreen[1] + posY)
+    }
+
+    /** Where his body's top-left would be if he stood in the middle of the box. */
+    fun centreScreenPos(): FloatArray {
+        getLocationOnScreen(locOnScreen)
+        return floatArrayOf(
+            locOnScreen[0] + (width - size) / 2f,
+            locOnScreen[1] + (height - size) / 2f
+        )
+    }
+
+    /** Puts him at a screen point, clamped into the box — how he arrives from the overlay. */
+    fun placeBodyAtScreen(x: Float, y: Float) {
+        getLocationOnScreen(locOnScreen)
+        posX = (x - locOnScreen[0]).coerceIn(0f, (width - size).coerceAtLeast(0).toFloat())
+        posY = (y - locOnScreen[1]).coerceIn(0f, (height - size).coerceAtLeast(0).toFloat())
+        velX = 0f
+        velY = 0f
+        entryPlaced = true
+        apply()
+    }
+
+    private val locOnScreen = IntArray(2)
 
     /**
      * Re-reads his whole look — kind, shade and size — from what is stored. The box builds itself
@@ -598,6 +653,9 @@ class GhostPlayground @JvmOverloads constructor(
     private val sideRoom: Float get() = GhostView.bubbleSidePx(density).toFloat()
 
     private companion object {
+        /** Matches the overlay's own fade, so the two overlap rather than leaving a gap. */
+        const val HANDOVER_MS = 170L
+
         const val PET_HOLD_MS = 1_000L
         const val PET_ANIMATION_MS = 2_000L
         const val FETCH_TIMEOUT_SECONDS = 6f

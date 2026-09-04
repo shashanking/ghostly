@@ -90,6 +90,13 @@ class MainActivity : Activity() {
     /** He is in the box for a moment while still being out on the overlay — see [visitBox]. */
     private var visiting = false
     private val returnToFloating = Runnable { endVisit() }
+
+    /**
+     * A hand-off between the box and the overlay is in flight. While it is, the box is left exactly
+     * as the hand-off put it — refreshing the screen must not snatch him back or shove him out
+     * halfway through the move.
+     */
+    private var handingOver = false
     private lateinit var hungerBar: ProgressBar
     private lateinit var energyBar: ProgressBar
     private lateinit var happinessBar: ProgressBar
@@ -399,22 +406,21 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) }
         }
         val feed = quickActionButton("Feed", IconGlyph.HUNGER) {
-            visitBox()
             PetStats.feed(this@MainActivity)
             Prefs.markFed(this@MainActivity)
             pulse(hungerBar)
-            playground.startFeeding()
             refreshNeeds()
+            // The treat drops once he is actually in the box — he may still be flying in.
+            visitBox { playground.startFeeding() }
         }
         actionsRow.addView(feed.root)
 
         val play = quickActionButton("Play · ${Emotions.PLAY_COST}", IconGlyph.PLAY, leftMargin = true) {
-            visitBox()
             when (Emotions.playWithToken(this@MainActivity)) {
                 Emotions.PlayOutcome.SUCCESS -> {
                     refreshNeeds()
                     pulse(playground)
-                    playground.startFetch()
+                    visitBox { playground.startFetch() }
                 }
                 Emotions.PlayOutcome.NO_TOKENS -> toastNoTokens()
                 Emotions.PlayOutcome.TOO_TIRED ->
@@ -1302,7 +1308,7 @@ class MainActivity : Activity() {
         // wearing whatever was chosen for him while he was away.
         if (::playground.isInitialized) {
             playground.applyLook()
-            playground.setAway(floating && !visiting)
+            if (!handingOver) playground.setAway(floating && !visiting)
         }
 
         statusLabel.visibility = if (canOverlay && floating && !visiting) View.GONE else View.VISIBLE
@@ -1403,21 +1409,95 @@ class MainActivity : Activity() {
     }
 
     /**
+     * The box hands him to the overlay. He is spawned at the exact screen point the box was
+     * drawing him at, and only once the overlay is actually up does the box let go — the two
+     * cross-fade on the same spot, so what you see is one ghost lifting off, not a swap.
+     */
+    private fun sendOutFloating() {
+        // Freeze him first: the overlay takes a moment to come up, and he must lift off from where
+        // he is standing at that moment, not from where he was when the button was pressed.
+        playground.holdStill()
+        val from = playground.bodyScreenPos()
+        handingOver = true
+        if (!GhostOverlayService.start(this, from[0], from[1])) {
+            handingOver = false
+            refreshState()
+            return
+        }
+        awaitOverlay({ GhostOverlayService.isRunning }) {
+            playground.setAway(true)
+            handingOver = false
+            refreshState()
+        }
+    }
+
+    /**
+     * The overlay hands him back. He flies across the screen to the middle of the box first, and
+     * the box only takes him over once he has landed there — so he travels home rather than
+     * vanishing from one place and appearing in another. [then] runs at the moment of hand-over.
+     */
+    private fun flyHome(then: () -> Unit) {
+        if (!GhostOverlayService.isRunning) {
+            then()
+            refreshState()
+            return
+        }
+        val target = playground.centreScreenPos()
+        handingOver = true
+        GhostOverlayService.comeHome(this, target[0], target[1])
+        awaitOverlay({ GhostOverlayService.arrivedHome }) {
+            // He has landed on the spot. The overlay dissolves out there while the box dissolves
+            // in on the same spot, so the swap between the two reads as him settling, not a jump.
+            GhostOverlayService.setVisiting(this, true)
+            playground.placeBodyAtScreen(target[0], target[1])
+            playground.setAway(false)
+            primaryButton.postDelayed({
+                then()
+                handingOver = false
+                refreshState()
+            }, HANDOVER_OVERLAP_MS)
+        }
+    }
+
+    /** Polls for a hand-off condition, and gives up rather than hanging if it never comes. */
+    private fun awaitOverlay(ready: () -> Boolean, then: () -> Unit) {
+        val startedAt = android.os.SystemClock.uptimeMillis()
+        val step = object : Runnable {
+            override fun run() {
+                if (ready() || android.os.SystemClock.uptimeMillis() - startedAt > HANDOVER_TIMEOUT_MS) {
+                    then()
+                    return
+                }
+                primaryButton.postDelayed(this, 40L)
+            }
+        }
+        step.run()
+    }
+
+    /**
      * Brings him off the overlay and into the box for a moment so he can be fed, played with or
      * petted — every one of which happens inside the box and nowhere else, floating or not. He
      * goes back out on his own [VISIT_GRACE_MS] after the last thing you did to him.
      *
      * Does nothing when he is already home; then the box is simply where he lives.
      */
-    private fun visitBox() {
-        if (!GhostOverlayService.isRunning) return
-        if (!visiting) {
-            visiting = true
-            GhostOverlayService.setVisiting(this, true)
+    private fun visitBox(then: () -> Unit = {}) {
+        if (!GhostOverlayService.isRunning) {
+            then()
+            return
         }
         primaryButton.removeCallbacks(returnToFloating)
-        primaryButton.postDelayed(returnToFloating, VISIT_GRACE_MS)
-        refreshState()
+        if (visiting) {
+            primaryButton.postDelayed(returnToFloating, VISIT_GRACE_MS)
+            then()
+            return
+        }
+        visiting = true
+        flyHome {
+            GhostOverlayService.setVisiting(this, true)
+            primaryButton.postDelayed(returnToFloating, VISIT_GRACE_MS)
+            then()
+        }
     }
 
     /** Ends a visit early — leaving Home, or leaving the app, sends him straight back out. */
@@ -1425,7 +1505,11 @@ class MainActivity : Activity() {
         if (!visiting) return
         visiting = false
         primaryButton.removeCallbacks(returnToFloating)
-        GhostOverlayService.setVisiting(this, false)
+        // He lifts off from wherever he is standing in the box, not from wherever he left it.
+        val from = playground.bodyScreenPos()
+        GhostOverlayService.setVisiting(this, false, from[0], from[1])
+        playground.setAway(true)
+        handingOver = false
         refreshState()
     }
 
@@ -1452,12 +1536,10 @@ class MainActivity : Activity() {
             // Calling him home ends any visit: he is not popping in any more, he is staying.
             visiting = false
             primaryButton.removeCallbacks(returnToFloating)
-            GhostOverlayService.stop(this)
+            flyHome { GhostOverlayService.stop(this) }
         } else {
-            GhostOverlayService.start(this)
+            sendOutFloating()
         }
-        // The service flips its own flag; give it a beat before redrawing.
-        primaryButton.postDelayed({ refreshState() }, 250)
     }
 
     private fun restartOverlayIfRunning() {
@@ -1509,6 +1591,12 @@ class MainActivity : Activity() {
 
         /** How long he stays in the box after the last thing you did, before drifting back out. */
         const val VISIT_GRACE_MS = 6_000L
+
+        /** Long enough for the two to cross-dissolve on the same spot before the overlay lets go. */
+        const val HANDOVER_OVERLAP_MS = 210L
+
+        /** A hand-off that never completes must not leave the screen stuck mid-move. */
+        const val HANDOVER_TIMEOUT_MS = 3_000L
     }
 
     // endregion
