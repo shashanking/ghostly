@@ -1446,9 +1446,9 @@ class GhostOverlayService : Service() {
      * The band is enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece
      * inherit it rather than each having to remember.
      */
-    private fun topInset() = usable.height() * 0.09f
+    private fun topInset() = usable.height() * 0.15f
 
-    private fun bottomInset() = usable.height() * 0.13f
+    private fun bottomInset() = usable.height() * 0.19f
 
     private fun minX() = usable.left - haloPx - overhang()
     private fun maxX() = usable.right - windowPx + haloPx + overhang()
