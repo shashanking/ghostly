@@ -15,9 +15,10 @@ enum class Shade(
     val bodyColor: Int,
     val bodyAlpha: Int,
     /**
-     * Outline. It exists to keep a see-through ghost readable on a busy screen, so it is weighted
-     * by how much you can see through him — the thinner he is, the more of it he needs. Anything
-     * heavier than that stops reading as an edge and starts reading as a border drawn round him.
+     * Outline. It exists to keep a see-through ghost readable on a busy screen, and no more than
+     * that: at any real weight it stops being an edge and becomes a border drawn round him. The
+     * same faint 20% on every shade — his silhouette, the shading and the wash behind him are what
+     * actually hold him together.
      */
     val outlineColor: Int,
     /** Eye ink — inverted along with the body for [INK]. */
@@ -27,19 +28,19 @@ enum class Shade(
     BONE(
         "bone", "Bone",
         Color.WHITE, 210,
-        Color.parseColor("#8CFFFFFF"),
+        Color.parseColor("#33FFFFFF"),
         Color.parseColor("#FF15122B"), Color.parseColor("#F5EDEFFF"),
     ),
     ASH(
         "ash", "Ash",
         Color.parseColor("#C6C8D2"), 205,
-        Color.parseColor("#4DFFFFFF"),
+        Color.parseColor("#33FFFFFF"),
         Color.parseColor("#FF15122B"), Color.parseColor("#F5E9EBF6"),
     ),
     VAPOUR(
         "vapour", "Vapour",
         Color.WHITE, 120,
-        Color.parseColor("#73FFFFFF"),
+        Color.parseColor("#33FFFFFF"),
         Color.parseColor("#E015122B"), Color.parseColor("#D9EDEFFF"),
     ),
     INK(
@@ -48,7 +49,7 @@ enum class Shade(
         // Faint on purpose. A dark, near-solid ghost does not need an outline to stay readable —
         // that is a job for the pale wash he carries behind him — and at the weight the pale
         // shades use it stopped being an edge and became a border drawn round him.
-        Color.parseColor("#40FFFFFF"),
+        Color.parseColor("#33FFFFFF"),
         Color.parseColor("#FFF2F2F4"), Color.parseColor("#FF3A3A46"),
     ),
     ;
