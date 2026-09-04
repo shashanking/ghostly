@@ -93,8 +93,6 @@ class GhostOverlayService : Service() {
         private const val PET_HOLD_MS = 1_000L
         private const val PET_ANIMATION_MS = 2_000L
         private const val DOUBLE_TAP_MS = 300L
-        private const val FEED_GRAVITY = 900f
-        private const val EAT_DURATION = 1.6f
 
         @Volatile
         var isRunning: Boolean = false
@@ -265,21 +263,6 @@ class GhostOverlayService : Service() {
     private var nextGoofyCheckAt = 45f
     private var goofyCornerX = 0f
     private var goofyCornerY = 0f
-
-    // Feeding: a small second window drops a treat from a screen corner; he sprints over and
-    // eats it. Triggered by the app writing a fresh Prefs.fedAt() timestamp.
-    private var feedState = FeedState.NONE
-    private var treatRoot: View? = null
-    private var treatParams: WindowManager.LayoutParams? = null
-    private var treatPx = 0
-    private var treatX = 0f
-    private var treatY = 0f
-    private var treatVelY = 0f
-    private var treatLandY = 0f
-    private var eatEndsAt = 0f
-    private var lastFedAt = 0L
-
-    private enum class FeedState { NONE, FALLING, CHASING, EATING }
 
     // So the notification is only rebuilt when what it would say actually changes.
     private var notifiedSleeping = false
@@ -526,7 +509,6 @@ class GhostOverlayService : Service() {
         root?.let { view -> runCatching { windowManager.removeView(view) } }
         root = null
         ghost = null
-        removeTreatWindow()
         super.onDestroy()
     }
 
@@ -558,7 +540,6 @@ class GhostOverlayService : Service() {
         view.species = Prefs.species(this)
         lastTintHue = Prefs.colorHue(this)
         view.setTint(lastTintHue)
-        lastFedAt = Prefs.fedAt(this)
         ghost = view
         val container = FrameLayout(this).apply {
             addView(
@@ -784,11 +765,6 @@ class GhostOverlayService : Service() {
             ghost?.setShade(newShade)
         }
 
-        val newFedAt = Prefs.fedAt(this)
-        if (newFedAt != lastFedAt) {
-            lastFedAt = newFedAt
-            triggerFeeding()
-        }
     }
 
     /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
@@ -1138,11 +1114,6 @@ class GhostOverlayService : Service() {
             return
         }
 
-        if (feedState != FeedState.NONE) {
-            tickFeeding(dt)
-            return
-        }
-
         if (sleeping) {
             // Settle to a stop and stay put rather than drifting off mid-nap.
             val settle = 1f - exp(-2.5f * dt)
@@ -1249,44 +1220,6 @@ class GhostOverlayService : Service() {
         ghost?.setPuffTarget(0.32f)
     }
 
-    /** Drops a treat window from a screen corner — see [tickFeeding] for the fall/sprint/eat. */
-    private fun triggerFeeding() {
-        if (ghost == null) return
-        if (sleeping) wakeUp()
-        removeTreatWindow()
-
-        treatPx = (28f * density).toInt()
-        val margin = treatPx * 1.5f
-        treatX = if (Random.nextBoolean()) margin else bounds.width() - margin
-        treatY = -treatPx.toFloat()
-        treatVelY = 0f
-        treatLandY = bounds.height() * (0.35f + Random.nextFloat() * 0.35f)
-        feedState = FeedState.FALLING
-
-        val view = View(this).apply {
-            background = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
-        }
-        val tParams = WindowManager.LayoutParams(
-            treatPx, treatPx,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            x = (treatX - treatPx / 2f).toInt()
-            y = (treatY - treatPx / 2f).toInt()
-        }
-        runCatching {
-            windowManager.addView(view, tParams)
-            treatRoot = view
-            treatParams = tParams
-        }
-    }
-
-    /** Falls to a landing spot, then he sprints over and eats — see [triggerFeeding]. */
     /**
      * The flight home. He eases towards the point the app named and stops there, and nothing else —
      * drift, flourishes, the behaviour engine — gets a say until he lands. [arrivedHome] is what
@@ -1318,64 +1251,6 @@ class GhostOverlayService : Service() {
         view.setMotion(velX, velY)
         view.lookAt(dx / dist, dy / dist)
         applyPosition()
-    }
-
-    private fun tickFeeding(dt: Float) {
-        val view = ghost ?: return
-        when (feedState) {
-            FeedState.FALLING -> {
-                treatVelY += FEED_GRAVITY * density * dt
-                treatY += treatVelY * dt
-                if (treatY >= treatLandY) treatY = treatLandY
-                updateTreatWindow()
-                if (treatY >= treatLandY) feedState = FeedState.CHASING
-            }
-            FeedState.CHASING -> {
-                val cx = posX + windowPx / 2f
-                val cy = posY + headroomPx + windowPx / 2f
-                val dx = treatX - cx
-                val dy = treatY - cy
-                val dist = hypot(dx, dy)
-                if (dist < ghostPx * 0.55f) {
-                    feedState = FeedState.EATING
-                    eatEndsAt = clock + EAT_DURATION
-                    velX = 0f
-                    velY = 0f
-                    view.setMotion(0f, 0f)
-                    view.startEating(EAT_DURATION)
-                    removeTreatWindow()
-                } else {
-                    val sprintSpeed = driftSpeed * 9f
-                    val settle = 1f - exp(-3f * dt)
-                    velX += (dx / dist * sprintSpeed - velX) * settle
-                    velY += (dy / dist * sprintSpeed - velY) * settle
-                    posX += velX * dt
-                    posY += velY * dt
-                    clampIntoBounds()
-                    view.setMotion(velX, velY)
-                    view.lookAt(dx / dist, dy / dist)
-                    applyPosition()
-                }
-            }
-            FeedState.EATING -> {
-                if (clock > eatEndsAt) feedState = FeedState.NONE
-            }
-            FeedState.NONE -> Unit
-        }
-    }
-
-    private fun updateTreatWindow() {
-        val view = treatRoot ?: return
-        val tParams = treatParams ?: return
-        tParams.x = (treatX - treatPx / 2f).toInt()
-        tParams.y = (treatY - treatPx / 2f).toInt()
-        runCatching { windowManager.updateViewLayout(view, tParams) }
-    }
-
-    private fun removeTreatWindow() {
-        treatRoot?.let { v -> runCatching { windowManager.removeView(v) } }
-        treatRoot = null
-        treatParams = null
     }
 
     private fun bounceHorizontally() {
