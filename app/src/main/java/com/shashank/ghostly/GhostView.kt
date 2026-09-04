@@ -828,9 +828,14 @@ class GhostView(context: Context) : View(context) {
         if (!asleep && startle > 0.35f) drawSpookEffects(canvas, cx, top, r, gw)
         if (petting) drawPettingHand(canvas, cx, top, r, gw)
         if (hearts.isNotEmpty()) drawHearts(canvas, w, cx, top, gw)
-        if (bubbleText != null) drawBubble(canvas, cx, top)
 
         canvas.restore()
+
+        // Outside every transform, on purpose. Drawn inside them it tumbled with him through a
+        // rollover and swung out past the edge of the view, where it was clipped. His words stay
+        // upright and where they were put; only he turns over underneath them. It still rides the
+        // idle bob, so it stays attached to his head rather than hanging in the air.
+        if (bubbleText != null) drawBubble(canvas, vw / 2f, top + bob)
     }
 
     /** One brow arched high, the other flat and low — the whole reading of confusion sits here. */
