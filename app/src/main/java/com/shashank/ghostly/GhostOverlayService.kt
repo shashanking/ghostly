@@ -737,8 +737,12 @@ class GhostOverlayService : Service() {
     private fun nearestCornerX(): Float =
         if (posX + windowPx / 2f < usable.centerX()) usable.left + windowPx / 2f else usable.right - windowPx / 2f
 
+    // "Corner" now means the side of the screen at a comfortable height, not the actual corner:
+    // the real ones are in the band he stays out of.
     private fun nearestCornerY(): Float =
-        if (posY < usable.centerY()) (usable.top + windowPx).toFloat() else (usable.bottom - windowPx).toFloat()
+        (if (posY < usable.centerY()) usable.top + windowPx else usable.bottom - windowPx)
+            .toFloat()
+            .coerceIn(minY(), maxY())
 
     /** Resizes and/or retints the live window in place when the Style tab changes, keeping him
      *  centred at the same spot rather than snapping to a corner or flickering off and back on. */
@@ -1187,9 +1191,17 @@ class GhostOverlayService : Service() {
         driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
         val targetX = cos(driftAngle) * driftSpeed * angrySpeed
         val targetY = sin(driftAngle) * driftSpeed * angrySpeed
+        // A gentle pull back towards the middle of the band, cubed so it is nothing at all in the
+        // middle of the screen and firm by the time he is near the top or bottom of his range. Left
+        // to a plain bounce he spent much of his time grazing along one edge or the other.
+        val bandMid = (minY() + maxY()) / 2f
+        val bandHalf = ((maxY() - minY()) / 2f).coerceAtLeast(1f)
+        val strayed = ((posY - bandMid) / bandHalf).coerceIn(-1f, 1f)
+        val recentre = -(strayed * strayed * strayed) * driftSpeed * 1.6f
+
         val settle = 1f - exp(-0.85f * dt)
         velX += (targetX - velX) * settle
-        velY += (targetY - velY) * settle
+        velY += (targetY + recentre - velY) * settle
 
         posX += velX * dt
         posY += velY * dt
@@ -1427,15 +1439,26 @@ class GhostOverlayService : Service() {
     // behind a system bar.
     private fun overhang() = ghostPx * 0.05f
 
+    /**
+     * He keeps off the top and bottom of the screen. Those are where a floating ghost is most in
+     * the way — the status bar and the clock above, the gesture bar and whatever the app puts at
+     * the bottom below — and where he is most likely to be sitting on something you are reading.
+     * The band is enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece
+     * inherit it rather than each having to remember.
+     */
+    private fun topInset() = usable.height() * 0.09f
+
+    private fun bottomInset() = usable.height() * 0.13f
+
     private fun minX() = usable.left - haloPx - overhang()
     private fun maxX() = usable.right - windowPx + haloPx + overhang()
     // His body starts headroomPx below the top of the window, so the vertical bounds shift by it:
     // he may sit at the very top of the screen with the bubble space hanging off-screen above.
-    private fun minY() = usable.top - haloPx - headroomPx - overhang()
+    private fun minY() = usable.top + topInset() - haloPx - headroomPx
     // The window is windowPx + headroomPx tall and his body sits in the BOTTOM of it, so the floor
     // has to come up by the headroom as well — without this he sinks below the navigation bar by
     // exactly the height of his own speech bubble.
-    private fun maxY() = usable.bottom - headroomPx - windowPx + haloPx + overhang()
+    private fun maxY() = usable.bottom - bottomInset() - headroomPx - windowPx + haloPx
 
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
