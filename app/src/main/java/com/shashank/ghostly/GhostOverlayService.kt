@@ -100,6 +100,9 @@ class GhostOverlayService : Service() {
         /** How long he may stay against a wall before he thinks better of it. */
         private const val PINNED_SECONDS = 1.3f
 
+        /** How far he stays out of the rounded corners, measured along the short way out. */
+        private const val CORNER_KEEPOUT_DP = 10f
+
         /** How much of the screen, top and bottom, he keeps out of. */
         private const val BAND_MARGIN = 0.05f
 
@@ -1563,6 +1566,20 @@ class GhostOverlayService : Service() {
     private fun clampIntoBounds() {
         posX = posX.coerceIn(minX(), maxX())
         posY = posY.coerceIn(minY(), maxY())
+        keepOutOfCorners()
+    }
+
+    /**
+     * Never in the very corner of the screen. Phone screens are rounded there, so a ghost in a
+     * corner is a ghost with a bite taken out of him — and the top corners are where the clock and
+     * the status icons live. He is slid along whichever edge he is on until he is clear of it.
+     */
+    private fun keepOutOfCorners() {
+        val pad = CORNER_KEEPOUT_DP * density
+        val nearSide = posX <= minX() + pad || posX >= maxX() - pad
+        if (!nearSide) return
+        if (posY <= minY() + pad) posY = minY() + pad
+        else if (posY >= maxY() - pad) posY = maxY() - pad
     }
 
     private var lastAppliedX = Int.MIN_VALUE
