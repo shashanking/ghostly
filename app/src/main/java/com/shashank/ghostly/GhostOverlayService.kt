@@ -1210,12 +1210,12 @@ class GhostOverlayService : Service() {
         driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
         val targetX = cos(driftAngle) * driftSpeed * angrySpeed
         val targetY = sin(driftAngle) * driftSpeed * angrySpeed
-        // A gentle pull back towards the middle of the band, cubed so it is nothing at all in the
-        // middle of the screen and firm by the time he is near the top or bottom of his range. Left
-        // to a plain bounce he spent much of his time grazing along one edge or the other.
+        // A pull back up out of the bottom of the screen, cubed so it is nothing in the middle and
+        // firm by the time he is down near the gesture bar. Downward only: the top of the screen is
+        // his to use, and pulling him off it was why he never seemed to reach the bar up there.
         val bandMid = (minY() + maxY()) / 2f
         val bandHalf = ((maxY() - minY()) / 2f).coerceAtLeast(1f)
-        val strayed = ((posY - bandMid) / bandHalf).coerceIn(-1f, 1f)
+        val strayed = ((posY - bandMid) / bandHalf).coerceIn(0f, 1f)
         val recentre = -(strayed * strayed * strayed) * driftSpeed * 0.9f
 
         val settle = 1f - exp(-0.85f * dt)
@@ -1539,7 +1539,9 @@ class GhostOverlayService : Service() {
      * Enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece inherit it
      * rather than each having to remember.
      */
-    private fun bandTop(): Float = usable.top.toFloat()
+    // The very top of the display, not the top of the *usable* area: the usable rect starts below
+    // the status bar, which left him stopping a bar's height short of where he should be able to go.
+    private fun bandTop(): Float = bounds.top.toFloat()
 
     private fun bandBottom(): Float =
         minOf(usable.bottom.toFloat(), bounds.height() * (1f - BAND_MARGIN))
