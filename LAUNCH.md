@@ -8,7 +8,7 @@ browser, so it is written as steps you can follow straight down the page.
 | File | Use |
 | --- | --- |
 | `app/build/outputs/bundle/release/app-release.aab` | **The upload.** Play requires an App Bundle, not an APK |
-| `Ghostly-1.0.1.apk` | Sideload/testing copy — not uploaded to Play |
+| `Ghostly-1.1.0.apk` | Sideload/testing copy — not uploaded to Play |
 | `play/store-listing.md` | Title, descriptions, category, and every Console answer |
 | `play/graphics/icon-512.png` | App icon (512×512) |
 | `play/graphics/feature-1024x500.png` | Feature graphic (1024×500) |
@@ -19,8 +19,21 @@ browser, so it is written as steps you can follow straight down the page.
 | `docs/privacy-policy.html` | Privacy policy, ready for GitHub Pages |
 | `ghostly-release.jks` + `keystore.properties` | Your upload key — **back these up** |
 
-App identity, fixed at first upload and never changeable: **`com.shashank.ghostly`**, version 1.0.1
-(versionCode 2), min Android 8.0, targets API 36 (required for new apps since 31 Aug 2026).
+App identity, fixed at first upload and never changeable: **`com.shashank.ghostly`**, version 1.1.0
+(versionCode 3), min Android 8.0, targets API 36 (required for new apps since 31 Aug 2026).
+
+### What changed since the 1.0.1 material was written
+
+The app is a different thing now, so most of the listing had to be redone:
+
+- He is a **pet**: needs, moods, a box on the Home tab where feeding, playing and petting happen.
+- A **behaviour engine** picks from 852 written reactions by time of day, mood, battery and more,
+  and twelve ways of moving — including tumbling, bouncing, pacing, orbiting and peeking.
+- **Optional Google sign-in** with a server of our own. This is the important one for the Console:
+  the old listing said "collects nothing, no account, works entirely offline", which is no longer
+  true, and **Data safety must be filled in accordingly** — see `play/store-listing.md`.
+- A complete visual redesign, black and white, so **every screenshot was retaken**.
+- Play **in-app updates**, so a future release can offer itself from inside the app.
 
 ## 1. Back up the signing key
 
@@ -72,7 +85,10 @@ Every answer is written out in `play/store-listing.md`. In short:
 - **Ads** → no ads
 - **Content rating** → questionnaire, category "Utility"; comes out rated for everyone
 - **Target audience** → 13+, not directed at children
-- **Data safety** → no data collected, no data shared
+- **Data safety** → **collected, optional, not shared** — email, name, user ID, device ID and his
+  stats, only if the user signs in. Full answers in `play/store-listing.md`. This changed
+  completely from the 1.0.1 draft; do not reuse the old "collects nothing" answers.
+- **Account deletion URL** → `https://shashanking.github.io/ghostly-privacy/delete-account.html`
 - **Advertising ID** → not used
 - **Foreground service permissions** → declare `FOREGROUND_SERVICE_SPECIAL_USE`, paste the
   justification from `play/store-listing.md`, and attach the demo video. Upload
@@ -89,8 +105,8 @@ being stopped from its notification.
 
 - Upload `app/build/outputs/bundle/release/app-release.aab`
 - Keep **Play App Signing** enabled (the default)
-- Release name: `1.0.1 (2)` · Release notes: e.g. *"First release. A little ghost who floats over
-  your apps and drifts away when you tap."*
+- Release name: `1.1.0 (3)` · Release notes: paste the **Release notes** block from
+  `play/store-listing.md`
 - **Countries/regions → select all** for a worldwide launch
 - Save → Review release → **Start rollout to Production** (100%)
 
@@ -105,7 +121,7 @@ First reviews typically take a few days, and longer for a brand-new developer ac
 
 ## Versioning
 
-This build is versionCode `2`, versionName `1.0.1`. Play rejects an upload whose versionCode it has
+This build is versionCode `3`, versionName `1.1.0`. Play rejects an upload whose versionCode it has
 seen before, so raise `versionCode` in `app/build.gradle.kts` for every upload — even a re-upload
 of a rejected build.
 
