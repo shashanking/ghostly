@@ -67,6 +67,9 @@ class GhostView(context: Context) : View(context) {
          */
         const val HALO_RADIUS = 0.68f
 
+        /** How far his hem hangs past his square's padding, as a fraction of his width. */
+        private const val HEM_DROP = 0.045f
+
         /** Where the wash is centred on him, down from the top of his square. */
         private const val HALO_CENTRE_Y = 0.46f
 
@@ -533,8 +536,9 @@ class GhostView(context: Context) : View(context) {
         val right = w - pad
         val top = bodyTop + pad
         // Bottom of HIS square, not of the view: the room below him belongs to the wash, and
-        // measuring down to the view's edge simply stretched his hem into it.
-        val bottom = bodyTop + w - pad
+        // measuring down to the view's edge simply stretched his hem into it. He is given a little
+        // of his own padding back below, so the hem hangs rather than stopping short.
+        val bottom = bodyTop + w - pad + w * HEM_DROP
         val gw = right - left
         val r = gw / 2f
         val cx = left + r
