@@ -212,6 +212,9 @@ class GhostOverlayService : Service() {
      */
     private var sidePx = 0
 
+    /** Blank room below his body inside the window, so the contrast wash is not cut off. */
+    private var haloPadPx = 0
+
     /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
     private var homing = false
     private var homingToX = 0f
@@ -531,6 +534,7 @@ class GhostOverlayService : Service() {
         windowPx = ghostPx + haloPx * 2
         headroomPx = GhostView.headroomPx(density, ghostPx)
         sidePx = GhostView.bubbleSidePx(density)
+        haloPadPx = GhostView.haloPadPx(ghostPx)
         driftSpeed = 18f * density
         refreshBounds()
 
@@ -546,7 +550,7 @@ class GhostOverlayService : Service() {
                 view,
                 FrameLayout.LayoutParams(
                     ghostPx + sidePx * 2,
-                    ghostPx + headroomPx,
+                    ghostPx + headroomPx + haloPadPx,
                     android.view.Gravity.CENTER
                 )
             )
@@ -565,7 +569,7 @@ class GhostOverlayService : Service() {
 
         params = WindowManager.LayoutParams(
             windowPx + sidePx * 2,
-            windowPx + headroomPx,
+            windowPx + headroomPx + haloPadPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             flags,
             PixelFormat.TRANSLUCENT
@@ -743,15 +747,16 @@ class GhostOverlayService : Service() {
             ghostPx = newGhostPx
             windowPx = newWindowPx
             headroomPx = GhostView.headroomPx(density, ghostPx)
+            haloPadPx = GhostView.haloPadPx(ghostPx)
             clampIntoBounds()
             params.width = windowPx + sidePx * 2
-            params.height = windowPx + headroomPx
+            params.height = windowPx + headroomPx + haloPadPx
             params.x = posX.toInt() - sidePx
             params.y = posY.toInt()
             view.setBodySize(ghostPx)
             view.layoutParams = FrameLayout.LayoutParams(
                 ghostPx + sidePx * 2,
-                ghostPx + headroomPx,
+                ghostPx + headroomPx + haloPadPx,
                 android.view.Gravity.CENTER
             )
             runCatching { windowManager.updateViewLayout(container, params) }

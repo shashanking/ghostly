@@ -141,7 +141,7 @@ class GhostPlayground @JvmOverloads constructor(
             ghost,
             LayoutParams(
                 size + GhostView.bubbleSidePx(density) * 2,
-                size + GhostView.headroomPx(density, size)
+                size + GhostView.headroomPx(density, size) + GhostView.haloPadPx(size)
             )
         )
     }
@@ -239,7 +239,7 @@ class GhostPlayground @JvmOverloads constructor(
         ghost.setBodySize(size)
         ghost.layoutParams = LayoutParams(
             size + GhostView.bubbleSidePx(density) * 2,
-            size + GhostView.headroomPx(density, size)
+            size + GhostView.headroomPx(density, size) + GhostView.haloPadPx(size)
         )
         posX = (cx - size / 2f).coerceIn(0f, (width - size).coerceAtLeast(0).toFloat())
         posY = (cy - size / 2f).coerceIn(0f, (height - size).coerceAtLeast(0).toFloat())

@@ -784,7 +784,8 @@ class MainActivity : Activity() {
             isClickable = false
             layoutParams = FrameLayout.LayoutParams(
                 dp(previewDp),
-                dp(previewDp) + GhostView.headroomPx(resources.displayMetrics.density, dp(previewDp)),
+                dp(previewDp) + GhostView.headroomPx(resources.displayMetrics.density, dp(previewDp)) +
+                    GhostView.haloPadPx(dp(previewDp)),
                 android.view.Gravity.CENTER,
             )
         }

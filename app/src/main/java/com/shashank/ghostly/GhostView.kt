@@ -61,6 +61,21 @@ class GhostView(context: Context) : View(context) {
 
         fun bubbleSidePx(density: Float): Int = (BUBBLE_SIDE_DP * density).toInt()
 
+        /**
+         * How far the contrast wash reaches, as a fraction of his body width. Kept under the side
+         * room above, so the wash is never cut off left or right either.
+         */
+        const val HALO_RADIUS = 0.82f
+
+        /** Where the wash is centred on him, down from the top of his square. */
+        private const val HALO_CENTRE_Y = 0.46f
+
+        /**
+         * Blank room BELOW his square. His body sits at the bottom of the view, so without this the
+         * wash — which reaches past his hem — is sliced off in a straight line under his feet.
+         */
+        fun haloPadPx(ghostPx: Int): Int = (ghostPx * (HALO_RADIUS + HALO_CENTRE_Y - 1f) + 2f).toInt()
+
         /** Headroom in pixels: proportional for a big ghost, but never less than a bubble needs. */
         fun headroomPx(density: Float, ghostPx: Int): Int =
             maxOf(ghostPx * BUBBLE_HEADROOM, (bubbleStackDp + 2f) * density).toInt()
@@ -271,7 +286,7 @@ class GhostView(context: Context) : View(context) {
         // side of him — which is what put a dark smudge beside a pale ghost.
         val cxv = w / 2f
         // Centred on his body, not on the view: the view carries bubble headroom above him.
-        val glowCy = (h - w).coerceAtLeast(0) + w * 0.46f
+        val glowCy = (h - haloPadPx(w) - w).coerceAtLeast(0) + w * HALO_CENTRE_Y
         // A pale ghost vanishes on a white wallpaper and a dark one vanishes on a black desk, so he
         // carries the opposite of himself as a soft halo. On a background where it is not needed it
         // simply cannot be seen.
@@ -280,9 +295,9 @@ class GhostView(context: Context) : View(context) {
         // ring. Peaking it partway out drew a bright edge that hugged his silhouette and read as a
         // border, which is not what a spread behind him is meant to look like.
         contrastHaloPaint.shader = RadialGradient(
-            cxv, glowCy, w * 0.92f,
-            intArrayOf((0x30 shl 24) or haloRgb, (0x16 shl 24) or haloRgb, (0x00 shl 24) or haloRgb),
-            floatArrayOf(0f, 0.46f, 1f),
+            cxv, glowCy, w * HALO_RADIUS,
+            intArrayOf((0x42 shl 24) or haloRgb, (0x24 shl 24) or haloRgb, (0x00 shl 24) or haloRgb),
+            floatArrayOf(0f, 0.44f, 1f),
             Shader.TileMode.CLAMP
         )
         val glowRgb = rehued(Color.parseColor("#67E8FF")) and 0x00FFFFFF
@@ -511,7 +526,8 @@ class GhostView(context: Context) : View(context) {
 
         // He is drawn in the bottom square of the view; any extra height above it is headroom for
         // the speech bubble, so a bubble never has to be squashed onto his crown.
-        val bodyTop = (h - w).coerceAtLeast(0f)
+        // His square sits above the halo's room, not flush with the bottom of the view.
+        val bodyTop = (h - haloPadPx(w.toInt()) - w).coerceAtLeast(0f)
         val pad = w * 0.10f
         val left = pad
         val right = w - pad
@@ -547,8 +563,8 @@ class GhostView(context: Context) : View(context) {
         bodyPath.close()
 
         val angry = !asleep && mood == Mood.ANGRY
-        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.92f, contrastHaloPaint)
-        canvas.drawCircle(w / 2f, bodyTop + w * 0.46f, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
+        canvas.drawCircle(w / 2f, bodyTop + w * HALO_CENTRE_Y, w * HALO_RADIUS, contrastHaloPaint)
+        canvas.drawCircle(w / 2f, bodyTop + w * HALO_CENTRE_Y, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
         // Ears are drawn before the body: whatever falls inside the dome gets painted over, leaving
         // only the tip poking out — which is what makes them read as attached to the head.
         drawEars(canvas, cx, top, r, gw, detailed)
