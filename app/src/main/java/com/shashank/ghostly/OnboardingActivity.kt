@@ -86,9 +86,22 @@ class OnboardingActivity : Activity() {
             finish()
             return
         }
+        // A rotation or a low-memory recreation (including the round trip to the system
+        // permission screen) would otherwise silently reset progress and avatar choice back to
+        // the very first step.
+        savedInstanceState?.getString(KEY_STEP)?.let { name ->
+            runCatching { Step.valueOf(name) }.getOrNull()?.let { currentStep = it }
+        }
+        savedInstanceState?.getString(KEY_SPECIES)?.let { id -> selectedSpecies = Species.fromId(id) }
         root = FrameLayout(this).apply { setBackgroundColor(Palette.ink) }
         setContentView(root)
-        goTo(Step.SPLASH)
+        goTo(currentStep)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_STEP, currentStep.name)
+        outState.putString(KEY_SPECIES, selectedSpecies.id)
     }
 
     override fun onResume() {
@@ -695,5 +708,8 @@ class OnboardingActivity : Activity() {
         // the ID token audience (serverClientId); Play Services separately checks the Android
         // client (package name + SHA-1) to confirm the calling app is legitimate.
         const val GOOGLE_WEB_CLIENT_ID = "736699818889-jio6642o3pl2c3mnok99ebvasjf2goro.apps.googleusercontent.com"
+
+        const val KEY_STEP = "onboarding_step"
+        const val KEY_SPECIES = "onboarding_species"
     }
 }

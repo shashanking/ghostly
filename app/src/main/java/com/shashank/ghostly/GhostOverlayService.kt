@@ -365,6 +365,13 @@ class GhostOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            // Android's touch-filtering treats a FLAG_NOT_TOUCHABLE overlay left at the default
+            // alpha (1.0) as fully opaque for tapjacking purposes, regardless of how transparent
+            // its actual drawing is — since Android 12 that blocks the tap from reaching the app
+            // underneath entirely. The platform will clamp this for us if we don't (visible as a
+            // "setting alpha to 0.80" warning in logcat), but relying on that silent correction
+            // instead of setting it ourselves isn't guaranteed across OS versions/OEM skins.
+            if (clickThrough) alpha = 0.8f
         }
 
         posX = Prefs.lastX(this, bounds.width() * 0.72f)

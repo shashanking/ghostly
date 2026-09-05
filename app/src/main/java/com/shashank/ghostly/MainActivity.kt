@@ -160,6 +160,11 @@ class MainActivity : Activity() {
      * bar clear of the name/streak/tokens, and the tab bar keeps the gesture nav clear of labels.
      */
     private fun applyEdgeToEdgeInsets() {
+        // WindowInsets.Type and the matching getInsets(Int) overload only exist from API 30 —
+        // referencing them unconditionally would crash on load on every Android 8–9 device this
+        // app (minSdk 26) is supposed to support. Older versions never draw under the system bars
+        // in the first place, so there's nothing to compensate for there.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val hudTop = hudBar.paddingTop
         val tabBottom = tabBar.paddingBottom
         hudBar.setOnApplyWindowInsetsListener { view, insets ->
@@ -1223,6 +1228,7 @@ class MainActivity : Activity() {
 
     private fun refreshNeeds() {
         val s = Emotions.snapshot(this)
+        playground.setMood(s.mood, s.body.sleeping)
         animateProgress(hungerBar, s.body.hunger.toInt())
         animateProgress(energyBar, s.body.energy.toInt())
         animateProgress(happinessBar, s.body.happiness.toInt())

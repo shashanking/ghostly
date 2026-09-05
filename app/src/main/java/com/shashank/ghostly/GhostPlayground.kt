@@ -45,6 +45,10 @@ class GhostPlayground @JvmOverloads constructor(
     private var nextGlanceAt = 1.5f
     private var placed = false
 
+    /** Set by [setMood] (from the Home tab's periodic refresh) — while true, idle wandering is
+     *  suspended so a sleeping pet actually reads as asleep here instead of drifting around. */
+    private var asleep = false
+
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#33FFFFFF")
         textSize = 13f * density
@@ -130,6 +134,13 @@ class GhostPlayground @JvmOverloads constructor(
     /** Called by the settings screen when the colour swatch changes. */
     fun setTint(hue: Float?) {
         ghost.setTint(hue)
+    }
+
+    /** Called from the Home tab's periodic refresh so this preview actually reflects his current
+     *  mood and sleep state, instead of always drawing an awake, drifting pet. */
+    fun setMood(mood: Mood, sleeping: Boolean) {
+        asleep = sleeping
+        ghost.setMood(mood, sleeping)
     }
 
     /** Drops a toy in for him to chase, grab, and carry back home — called when Play succeeds.
@@ -317,6 +328,21 @@ class GhostPlayground @JvmOverloads constructor(
 
         if (fetchState != FetchState.NONE) {
             tickFetch(dt)
+            return
+        }
+
+        if (asleep) {
+            // Settle to a stop and stay put rather than drifting off mid-nap — same rule as the
+            // overlay.
+            val settle = 1f - exp(-2.5f * dt)
+            velX -= velX * settle
+            velY -= velY * settle
+            posX += velX * dt
+            posY += velY * dt
+            ghost.setMotion(velX, velY)
+            ghost.advance(dt)
+            ghost.invalidate()
+            apply()
             return
         }
 

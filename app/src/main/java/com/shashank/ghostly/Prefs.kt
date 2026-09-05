@@ -151,8 +151,9 @@ object Prefs {
     fun setName(context: Context, name: String?) =
         prefs(context).edit().putString(KEY_NAME, name?.trim()?.take(18)?.ifEmpty { null }).apply()
 
-    /** Defaults to now, so a first-ever read sees zero elapsed time rather than a huge one. */
-    fun statsUpdatedAt(context: Context) = prefs(context).getLong(KEY_STATS_AT, System.currentTimeMillis())
+    /** 0 means "never persisted" — a fresh pet has no anchor to measure elapsed time against
+     *  yet. See [PetStats.snapshot]'s first-read branch, which writes a real one immediately. */
+    fun statsUpdatedAt(context: Context) = prefs(context).getLong(KEY_STATS_AT, 0L)
 
     fun saveStats(context: Context, hunger: Float, energy: Float, happiness: Float, sleeping: Boolean, at: Long) {
         prefs(context).edit()
