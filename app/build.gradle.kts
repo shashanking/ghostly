@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.github.triplet.play")
 }
 
 // Release signing details live in keystore.properties (kept out of version control).
@@ -69,4 +70,17 @@ dependencies {
     // are plain Activities (not ComponentActivity), so lifecycleScope isn't available — a small
     // manually-managed CoroutineScope needs this instead.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+}
+
+// Gradle Play Publisher — `./gradlew publishBundle` uploads the signed release AAB straight to
+// the internal testing track via the Play Developer API. Needs a service account JSON key at
+// play-service-account.json (kept out of version control, like keystore.properties); until that
+// file exists, publish tasks simply aren't usable but every other build task is unaffected.
+play {
+    val serviceAccountFile = rootProject.file("play-service-account.json")
+    if (serviceAccountFile.exists()) {
+        serviceAccountCredentials.set(serviceAccountFile)
+    }
+    track.set("internal")
+    defaultToAppBundles.set(true)
 }

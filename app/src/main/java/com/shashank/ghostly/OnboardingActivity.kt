@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
 import android.view.Choreographer
 import android.view.Gravity
@@ -338,6 +339,12 @@ class OnboardingActivity : Activity() {
                     Toast.makeText(this@OnboardingActivity, "That didn't look like a Google account", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: GetCredentialException) {
+                // The real cause (SHA-1/config mismatch, no Google account on device, R8 having
+                // stripped something in a release build, etc.) matters a lot more than this toast
+                // lets on — it's swallowed otherwise, which makes a Play Store-only failure
+                // nearly undiagnosable. Logged, not shown, since the message is meaningless to a
+                // real user.
+                Log.e("GhostlyAuth", "Google sign-in failed: ${e::class.simpleName} — ${e.message}", e)
                 Toast.makeText(
                     this@OnboardingActivity,
                     "Sign-in didn't complete — you can try again or skip for now",

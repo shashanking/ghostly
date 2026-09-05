@@ -39,6 +39,12 @@ object PetStats {
      *  wake him again on the very next tick, a second or so later. */
     private const val MIN_NAP_MILLIS = 120_000L
 
+    /** Waking him up always leaves at least this much energy in the tank — without this, waking
+     *  him early (energy still at MIN, which is *why* he was asleep) would satisfy the auto-sleep
+     *  condition again on the very next stats catch-up, sending him straight back to sleep a
+     *  second or two later and making "wake him up" look like it does nothing. */
+    private const val WAKE_ENERGY_FLOOR = 20f
+
     data class Snapshot(val hunger: Float, val energy: Float, val happiness: Float, val sleeping: Boolean)
 
     /**
@@ -102,7 +108,10 @@ object PetStats {
     fun setSleeping(context: Context, sleeping: Boolean) {
         val s = snapshot(context)
         if (sleeping && !s.sleeping) Prefs.setSleepStartedAt(context, System.currentTimeMillis())
-        Prefs.saveStats(context, s.hunger, s.energy, s.happiness, sleeping, System.currentTimeMillis())
+        // Waking him up (by request or by a poke) needs a floor under his energy, or the very
+        // next stats catch-up sees it still at MIN and immediately puts him back to sleep.
+        val energy = if (sleeping) s.energy else s.energy.coerceAtLeast(WAKE_ENERGY_FLOOR)
+        Prefs.saveStats(context, s.hunger, energy, s.happiness, sleeping, System.currentTimeMillis())
     }
 
     /** A tap or poke while he's asleep stirs him awake. */
