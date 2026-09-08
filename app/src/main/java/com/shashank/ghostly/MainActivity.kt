@@ -599,11 +599,15 @@ class MainActivity : Activity() {
             if (Emotions.giveTreat(this@MainActivity)) {
                 pulse(treatCard)
                 Prefs.markFed(this@MainActivity)
-                // The animation plays on the Home tab's preview — jump there so it's actually seen
-                // rather than happening silently behind the Shop page.
+                // The animation plays in his box on the Home tab — jump there so it is actually
+                // seen rather than happening silently behind the Shop page, and call him in for
+                // it if he is out floating, or the treat drops into an empty box.
                 showTab(AppTab.HOME)
-                playground.startFeeding()
                 refreshNeeds()
+                // After the tab switch the box has only just been made visible: it has no position
+                // on screen until it has been laid out, and calling him to a box at 0,0 sends him
+                // to the wrong place. One frame is all it needs.
+                playground.post { visitBox { playground.startFeeding() } }
             } else {
                 toastNoTokens()
             }
@@ -619,8 +623,8 @@ class MainActivity : Activity() {
             if (Emotions.giveGift(this@MainActivity)) {
                 pulse(giftCard)
                 showTab(AppTab.HOME)
-                playground.startGift()
                 refreshNeeds()
+                playground.post { visitBox { playground.startGift() } }
             } else {
                 toastNoTokens()
             }
