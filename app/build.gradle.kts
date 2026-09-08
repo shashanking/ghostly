@@ -20,7 +20,7 @@ android {
         applicationId = "com.shashank.ghostly"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
+        versionCode = 4
         versionName = "1.1.0"
     }
 
