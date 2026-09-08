@@ -152,7 +152,7 @@ class GhostPlayground @JvmOverloads constructor(
         addView(
             ghost,
             LayoutParams(
-                size + GhostView.bubbleSidePx(density) * 2,
+                size + GhostView.bubbleSidePx(density, size) * 2,
                 size + GhostView.headroomPx(density, size) + GhostView.haloPadPx(size)
             )
         )
@@ -250,7 +250,7 @@ class GhostPlayground @JvmOverloads constructor(
         size = px
         ghost.setBodySize(size)
         ghost.layoutParams = LayoutParams(
-            size + GhostView.bubbleSidePx(density) * 2,
+            size + GhostView.bubbleSidePx(density, size) * 2,
             size + GhostView.headroomPx(density, size) + GhostView.haloPadPx(size)
         )
         posX = (cx - size / 2f).coerceIn(0f, (width - size).coerceAtLeast(0).toFloat())
@@ -751,7 +751,7 @@ class GhostPlayground @JvmOverloads constructor(
     private val headroom: Float get() = GhostView.headroomPx(density, size).toFloat()
 
     /** Blank room either side of his body inside the view — see the bubble note in [GhostView]. */
-    private val sideRoom: Float get() = GhostView.bubbleSidePx(density).toFloat()
+    private val sideRoom: Float get() = GhostView.bubbleSidePx(density, size).toFloat()
 
     private companion object {
         /** Matches the overlay's own fade, so the two overlap rather than leaving a gap. */

@@ -42,7 +42,12 @@ object ContentSync {
         refreshContent(context, forceContent)
         if (!GhostlyApi.hasSession(context)) return
         drainEvents(context)
-        GhostlyApi.syncState(context)
+        // His stats are a slope, not an event: pushing them every ten minutes woke the radio for a
+        // round trip whether or not anything had happened. The stats carry the moment they were
+        // last written, so if that has not moved, the server already has this.
+        val statsAt = Prefs.statsUpdatedAt(context)
+        if (statsAt == Prefs.lastSyncedStatsAt(context)) return
+        if (GhostlyApi.syncState(context)) Prefs.saveLastSyncedStatsAt(context, statsAt)
     }
 
     private fun refreshContent(context: Context, force: Boolean) {

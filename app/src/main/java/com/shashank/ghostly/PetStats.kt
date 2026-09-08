@@ -52,6 +52,9 @@ object PetStats {
      * scales how fast hunger and energy move — a low-maintenance species drains slower, a needy
      * one faster. It says nothing about mood; that's [Emotions]' job, layered on top of this.
      */
+    /** How often the decaying stats are actually written down — see the note in [snapshot]. */
+    private const val PERSIST_EVERY_MILLIS = 60_000L
+
     fun snapshot(context: Context, personality: Personality = Personality.NEUTRAL): Snapshot {
         val now = System.currentTimeMillis()
         val last = Prefs.statsUpdatedAt(context)
@@ -59,6 +62,7 @@ object PetStats {
         var energy = Prefs.energy(context)
         var happiness = Prefs.happiness(context)
         var sleeping = Prefs.sleeping(context)
+        val wasSleeping = sleeping
         var sleepStartedAt = Prefs.sleepStartedAt(context)
 
         if (last == 0L) {
@@ -118,7 +122,13 @@ object PetStats {
             val neglect = if (hunger <= HUNGRY_THRESHOLD) 1.6f else 1f
             happiness = (happiness - HAPPINESS_RATE * neglect * e).coerceIn(MIN, MAX)
 
-            Prefs.saveStats(context, hunger, energy, happiness, sleeping, now)
+            // These are read every few seconds but only need to be *stored* occasionally: they are
+            // recomputed from elapsed time on every read, so a later anchor loses nothing except a
+            // prefs-file rewrite. Falling asleep or waking is written immediately — that one is a
+            // state change, not a slope.
+            if (sleeping != wasSleeping || now - last >= PERSIST_EVERY_MILLIS) {
+                Prefs.saveStats(context, hunger, energy, happiness, sleeping, now)
+            }
             if (sleepStartedAt != Prefs.sleepStartedAt(context)) Prefs.setSleepStartedAt(context, sleepStartedAt)
         }
         return Snapshot(hunger, energy, happiness, sleeping)

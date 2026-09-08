@@ -60,18 +60,24 @@ class GhostView(context: Context) : View(context) {
         private val bubbleStackDp = BUBBLE_TEXT_DP + BUBBLE_PAD_Y_DP * 2f + BUBBLE_TAIL_DP + BUBBLE_LIFT_DP
 
         /**
-         * Room on EACH side of his body square, so the fixed-size bubble has somewhere to sit.
-         * Without it the view is exactly as wide as he is and a bubble wider than a small ghost
-         * gets sliced off at the view edge — which is what happened at Wisp size.
+         * Room on EACH side of his body square: enough for the half of a widest-case bubble that
+         * overhangs him, plus the reach of the wash behind him — and not a pixel more.
+         *
+         * This was a flat 44dp, guessed before the bubble was capped at [BUBBLE_MAX_W_DP], and it
+         * left the overlay window nearly seven times his own area. Every pixel of that window is
+         * recomposited above whatever app you are looking at, every frame, so the padding was
+         * costing more battery than the ghost was.
          */
-        const val BUBBLE_SIDE_DP = 44f
+        fun bubbleSidePx(density: Float, ghostPx: Int): Int {
+            val bubbleOverhang = (BUBBLE_MAX_W_DP * density - ghostPx) / 2f
+            val washReach = ghostPx * (HALO_RADIUS - 0.5f)
+            return maxOf(bubbleOverhang, washReach, 0f).toInt() + 1
+        }
 
-        fun bubbleSidePx(density: Float): Int = (BUBBLE_SIDE_DP * density).toInt()
+        /** Left and right. Hoisted because allocating it per side, per frame, is thirty a second. */
+        private val SIDES = intArrayOf(-1, 1)
 
-        /**
-         * How far the contrast wash reaches, as a fraction of his body width. Kept under the side
-         * room above, so the wash is never cut off left or right either.
-         */
+        /** How far the contrast wash reaches, as a fraction of his body width. */
         const val HALO_RADIUS = 0.68f
 
         /** How far his hem hangs past his square's padding, as a fraction of his width. */
@@ -246,6 +252,9 @@ class GhostView(context: Context) : View(context) {
     /** What he still has left to say, one bubble at a time — see [showBubble]. */
     private val bubbleQueue = ArrayDeque<String>()
     private var bubbleSegmentSeconds = 0f
+
+    /** Measured once when the text is set — it cannot change while that bubble is on screen. */
+    private var bubbleWidth = 0f
 
     // Eating: mouth chomps rapidly and he dips toward the food, sending up little hearts as he
     // goes — see startEating.
@@ -443,13 +452,21 @@ class GhostView(context: Context) : View(context) {
         val parts = splitIntoBubbles(text)
         bubbleQueue.clear()
         if (parts.isEmpty()) {
-            bubbleText = null
+            say(null)
             return
         }
         bubbleSegmentSeconds = maxOf(0.85f, durationSeconds / parts.size)
-        bubbleText = parts.first()
+        say(parts.first())
         bubbleEndsAt = phase + bubbleSegmentSeconds
         for (i in 1 until parts.size) bubbleQueue.addLast(parts[i])
+    }
+
+    /** Sets what he is saying and measures it once, rather than on every frame it is drawn. */
+    private fun say(text: String?) {
+        bubbleText = text
+        bubbleWidth = if (text == null) 0f else {
+            bubbleTextPaint.measureText(text) + BUBBLE_PAD_X_DP * density * 2f
+        }
     }
 
     /**
@@ -583,7 +600,7 @@ class GhostView(context: Context) : View(context) {
         if (petting && phase > pettingEndsAt) petting = false
         if (bubbleText != null && phase > bubbleEndsAt) {
             // Straight on to the next thing he has to say, if there is one.
-            bubbleText = bubbleQueue.removeFirstOrNull()
+            say(bubbleQueue.removeFirstOrNull())
             if (bubbleText != null) bubbleEndsAt = phase + bubbleSegmentSeconds
         }
         if (expression != Expression.NONE && phase > expressionEndsAt) expression = Expression.NONE
@@ -724,10 +741,9 @@ class GhostView(context: Context) : View(context) {
                 floatArrayOf(0.45f, 1f), Shader.TileMode.CLAMP
             )
         }
-        canvas.save()
-        canvas.clipPath(bodyPath)
-        canvas.drawRect(0f, 0f, w, h, shadePaint)
-        canvas.restore()
+        // Painted straight onto his shape. Clipping to it and filling a rect cost a non-rectangular
+        // clip every frame, on a path that is rebuilt every frame and so can never be cached.
+        canvas.drawPath(bodyPath, shadePaint)
 
         // Face. Deliberately oversized — at this size a subtle face just disappears.
         // Each eye is a pale sclera with a dark pupil that actually travels inside it, so you can
@@ -746,7 +762,7 @@ class GhostView(context: Context) : View(context) {
         val face = expression
         if (face == Expression.FAINT) {
             // Two crossed strokes per eye, and a swirl of dizziness over the crown.
-            for (side in intArrayOf(-1, 1)) {
+            for (side in SIDES) {
                 val ex = cx + side * eyeDx
                 val a = eyeR * 0.62f
                 canvas.drawLine(ex - a, eyeY - a, ex + a, eyeY + a, linePaint)
@@ -756,14 +772,14 @@ class GhostView(context: Context) : View(context) {
             canvas.drawArc(rect, 40f, 300f, false, linePaint)
         } else if (face == Expression.DELIGHTED) {
             // Eyes squeezed shut with pleasure — arcs bowing up, the inverse of the sleeping ones.
-            for (side in intArrayOf(-1, 1)) {
+            for (side in SIDES) {
                 val ex = cx + side * eyeDx
                 rect.set(ex - eyeR * 0.85f, eyeY - eyeR * 0.45f, ex + eyeR * 0.85f, eyeY + eyeR * 0.75f)
                 canvas.drawArc(rect, 200f, 140f, false, linePaint)
             }
         } else if (face == Expression.SLEEPY) {
             // Heavy lids: the open eye, squashed, with a lid drawn across the top.
-            for (side in intArrayOf(-1, 1)) {
+            for (side in SIDES) {
                 val ex = cx + side * eyeDx
                 canvas.save()
                 canvas.scale(1f, 0.45f, ex, eyeY)
@@ -774,13 +790,13 @@ class GhostView(context: Context) : View(context) {
                 canvas.drawArc(rect, 200f, 140f, false, linePaint)
             }
         } else if (asleep) {
-            for (side in intArrayOf(-1, 1)) {
+            for (side in SIDES) {
                 val ex = cx + side * eyeDx
                 rect.set(ex - eyeR, eyeY - eyeR * 0.55f, ex + eyeR, eyeY + eyeR * 0.55f)
                 canvas.drawArc(rect, 20f, 140f, false, linePaint)
             }
         } else {
-            for (side in intArrayOf(-1, 1)) {
+            for (side in SIDES) {
                 val ex = cx + side * eyeDx
                 val squish = (blinkProgress.coerceAtLeast(0.06f)) * (1f - droop)
                 canvas.save()
@@ -901,7 +917,7 @@ class GhostView(context: Context) : View(context) {
         val browY = eyeY - eyeR * 1.25f
         val browHalf = eyeR * 0.55f
         val drop = eyeR * 0.32f
-        for (side in intArrayOf(-1, 1)) {
+        for (side in SIDES) {
             val ex = cx + side * eyeDx
             val outerX = ex + side * browHalf
             val innerX = ex - side * browHalf
@@ -911,7 +927,7 @@ class GhostView(context: Context) : View(context) {
 
     private fun drawWhiskers(canvas: Canvas, cx: Float, mouthY: Float, gw: Float) {
         val len = gw * 0.16f
-        for (side in intArrayOf(-1, 1)) {
+        for (side in SIDES) {
             val startX = cx + side * gw * 0.14f
             for (row in -1..1) {
                 val y = mouthY + row * gw * 0.045f
@@ -961,7 +977,7 @@ class GhostView(context: Context) : View(context) {
     /** Sweat drops and a few short speed-lines trailing behind — how a good spook reads. */
     private fun drawSpookEffects(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
         sweatPaint.alpha = (startle * 235f).toInt().coerceIn(0, 235)
-        for (side in intArrayOf(-1, 1)) {
+        for (side in SIDES) {
             val dropX = cx + side * r * 0.72f
             val dropY = top + r * 0.55f + sin(phase * 9f + side) * gw * 0.02f
             val s = gw * 0.055f
@@ -989,7 +1005,7 @@ class GhostView(context: Context) : View(context) {
         val text = bubbleText ?: return
         val padX = BUBBLE_PAD_X_DP * density
         val padY = BUBBLE_PAD_Y_DP * density
-        val bw = bubbleTextPaint.measureText(text) + padX * 2f
+        val bw = bubbleWidth
         val bh = bubbleTextPaint.textSize + padY * 2f
         val tail = BUBBLE_TAIL_DP * density
         val tailLean = tail * 0.35f
@@ -1019,7 +1035,7 @@ class GhostView(context: Context) : View(context) {
             Species.CAT -> {
                 val earHeight = gw * 0.275f
                 val earHalfBase = gw * 0.13f
-                for (side in intArrayOf(-1, 1)) {
+                for (side in SIDES) {
                     val baseCx = cx + side * r * 0.60f
                     val baseY = top + r * 0.30f
                     val tipX = cx + side * r * 0.98f
@@ -1057,7 +1073,7 @@ class GhostView(context: Context) : View(context) {
                 val earW = gw * 0.20f
                 val earH = gw * 0.50f
                 val anchorY = top + r * 0.34f
-                for (side in intArrayOf(-1, 1)) {
+                for (side in SIDES) {
                     val anchorX = cx + side * r * 0.94f
                     canvas.save()
                     canvas.rotate(-side * 14f, anchorX, anchorY)

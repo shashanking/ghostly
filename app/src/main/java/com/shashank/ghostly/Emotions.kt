@@ -109,7 +109,9 @@ object Emotions {
             } else {
                 (anger - FALL_RATE * personality.forgiveness * e).coerceIn(MIN, MAX)
             }
-            Prefs.saveAnger(context, anger)
+            // Same reasoning as the stats above: recomputed on every read, so it only needs
+            // writing when it has actually moved by something worth storing.
+            if (kotlin.math.abs(anger - Prefs.anger(context)) >= 1f) Prefs.saveAnger(context, anger)
         }
 
         val mood = when {

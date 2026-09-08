@@ -41,6 +41,7 @@ object Prefs {
     private const val KEY_SESSION_TOKEN = "session_token"
     private const val KEY_USER_ID = "user_id"
     private const val KEY_PET_SERVER_ID = "pet_server_id"
+    private const val KEY_LAST_SYNCED_STATS_AT = "last_synced_stats_at"
     private const val KEY_CONTENT_VERSION = "content_version"
     private const val KEY_CONTENT_SYNCED_AT = "content_synced_at"
     private const val KEY_PENDING_EVENTS = "pending_events"
@@ -267,6 +268,12 @@ object Prefs {
 
     fun petServerId(context: Context): String? = prefs(context).getString(KEY_PET_SERVER_ID, null)
     fun savePetServerId(context: Context, id: String) = prefs(context).edit().putString(KEY_PET_SERVER_ID, id).apply()
+
+    /** The stats timestamp last accepted by the server — see the note in [ContentSync]. */
+    fun lastSyncedStatsAt(context: Context) = prefs(context).getLong(KEY_LAST_SYNCED_STATS_AT, 0L)
+
+    fun saveLastSyncedStatsAt(context: Context, at: Long) =
+        prefs(context).edit().putLong(KEY_LAST_SYNCED_STATS_AT, at).apply()
 
     fun contentVersion(context: Context) = prefs(context).getInt(KEY_CONTENT_VERSION, 0)
     fun saveContentVersion(context: Context, v: Int) = prefs(context).edit().putInt(KEY_CONTENT_VERSION, v).apply()

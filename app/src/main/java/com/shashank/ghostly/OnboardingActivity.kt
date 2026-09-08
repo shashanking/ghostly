@@ -292,7 +292,7 @@ class OnboardingActivity : Activity() {
         hero.addView(
             ghost,
             FrameLayout.LayoutParams(
-                dp(96) + GhostView.bubbleSidePx(resources.displayMetrics.density) * 2,
+                dp(96) + GhostView.bubbleSidePx(resources.displayMetrics.density, dp(96)) * 2,
                 dp(96) + GhostView.headroomPx(resources.displayMetrics.density, dp(96)) +
                     GhostView.haloPadPx(dp(96)),
             ).apply { gravity = Gravity.CENTER },

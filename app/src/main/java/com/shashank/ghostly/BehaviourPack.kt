@@ -126,18 +126,27 @@ class BehaviourPack(
             return fallback?.let { json -> runCatching { parse(json) }.getOrNull() }
         }
 
-        /** Version of whichever pack [load] would return — the newer of the two. */
-        fun loadedVersion(context: Context): Int = runCatching {
-            val bundled = runCatching {
-                JSONObject(context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() })
-                    .optInt("version", 0)
-            }.getOrDefault(0)
-            val downloaded = runCatching {
-                java.io.File(context.filesDir, ASSET_NAME).takeIf { it.isFile }
-                    ?.let { JSONObject(it.readText()).optInt("version", 0) } ?: 0
-            }.getOrDefault(0)
-            maxOf(bundled, downloaded)
-        }.getOrDefault(0)
+        /** The bundled pack never changes while the process lives, so it is read exactly once. */
+        @Volatile
+        private var bundledVersion = -1
+
+        /**
+         * Version of whichever pack [load] would return — the newer of the two.
+         *
+         * This is asked for on every behaviour tick, so it must be nearly free. It used to open and
+         * fully JSON-parse a quarter-megabyte of content twice each time just to read one integer,
+         * which came to thousands of parses a day. The bundled side is now read once per process
+         * and the downloaded side comes from the version [GhostlyApi.downloadPack] already records.
+         */
+        fun loadedVersion(context: Context): Int {
+            if (bundledVersion < 0) {
+                bundledVersion = runCatching {
+                    JSONObject(context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() })
+                        .optInt("version", 0)
+                }.getOrDefault(0)
+            }
+            return maxOf(bundledVersion, Prefs.contentVersion(context))
+        }
 
         fun parse(root: JSONObject): BehaviourPack {
             val species = mutableMapOf<String, SpeciesProfile>()

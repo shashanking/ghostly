@@ -75,6 +75,14 @@ class GhostOverlayService : Service() {
         private const val CHANNEL_ID = "ghost_overlay"
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
+
+        /** Writes that can change how he is feeling, or how he looks. Nothing else needs a redraw. */
+        private val MOOD_KEYS = setOf("hunger", "energy", "happiness", "anger", "sleeping", "fed_at")
+        private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name")
+
+        /** Frame budgets for the two quiet states — see the note in the frame callback. */
+        private const val IDLE_FRAME_SECONDS = 1f / 15f
+        private const val SLEEP_FRAME_SECONDS = 1f / 8f
         private const val BEHAVIOUR_INTERVAL_MS = 15_000L
         private const val SYNC_INTERVAL_MS = 10L * 60 * 1000
         private const val FIRST_SYNC_DELAY_MS = 4_000L
@@ -367,7 +375,9 @@ class GhostOverlayService : Service() {
     private val behaviourRunnable = object : Runnable {
         override fun run() {
             if (!isRunning) return
-            proposeBehaviour()
+            // A behaviour chosen while the screen is off, or while he is hidden in the app's box,
+            // is decided, animated and thrown away unseen.
+            if (looping) proposeBehaviour()
             handler.postDelayed(this, BEHAVIOUR_INTERVAL_MS)
         }
     }
@@ -383,7 +393,15 @@ class GhostOverlayService : Service() {
             // A slow drifting ghost does not need 60 or 120 frames a second, and every frame moves
             // a window, which is far from free — measured at roughly double the CPU at 45fps versus
             // 30. Thirty is indistinguishable at this speed.
-            if (lastFrameNanos != 0L && elapsed < MIN_FRAME_SECONDS) {
+            // Thirty frames a second is for things you are watching happen: a routine, a flight,
+            // a drag. Plain drifting moves him about a pixel and a half per frame, and a sleeping
+            // ghost only breathes — neither is worth the same budget.
+            val minFrame = when {
+                routine != null || homing || dragging -> MIN_FRAME_SECONDS
+                sleeping -> SLEEP_FRAME_SECONDS
+                else -> IDLE_FRAME_SECONDS
+            }
+            if (lastFrameNanos != 0L && elapsed < minFrame) {
                 Choreographer.getInstance().postFrameCallback(this)
                 return
             }
@@ -408,12 +426,10 @@ class GhostOverlayService : Service() {
      */
     private val watchdog = object : Runnable {
         override fun run() {
-            if (isRunning) {
-                val screenOn = getSystemService(PowerManager::class.java)?.isInteractive ?: true
-                val stalled = SystemClock.elapsedRealtime() - lastFrameAt > 1_500
-                if (screenOn && (!looping || stalled)) startLoop()
-                handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
-            }
+            if (!isRunning) return
+            val stalled = SystemClock.elapsedRealtime() - lastFrameAt > 1_500
+            if (!looping || stalled) startLoop()
+            handler.postDelayed(this, WATCHDOG_INTERVAL_MS)
         }
     }
 
@@ -432,6 +448,10 @@ class GhostOverlayService : Service() {
     }
 
     private fun startLoop() {
+        if (!looping) {
+            handler.removeCallbacks(watchdog)
+            handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
+        }
         looping = true
         lastFrameNanos = 0L
         lastFrameAt = SystemClock.elapsedRealtime()
@@ -458,6 +478,9 @@ class GhostOverlayService : Service() {
 
     private fun stopLoop() {
         looping = false
+        // Nothing is being drawn, so nothing needs watching. This used to keep waking the main
+        // looper every two seconds all night for no purpose.
+        handler.removeCallbacks(watchdog)
         Choreographer.getInstance().removeFrameCallback(frameCallback)
     }
 
@@ -568,7 +591,8 @@ class GhostOverlayService : Service() {
         haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
         windowPx = ghostPx + haloPx * 2
         headroomPx = GhostView.headroomPx(density, ghostPx)
-        sidePx = GhostView.bubbleSidePx(density)
+        sidePx = GhostView.bubbleSidePx(density, ghostPx)
+        moveThresholdPx = maxOf(1, density.toInt())
         haloPadPx = GhostView.haloPadPx(ghostPx)
         driftSpeed = 18f * density
         refreshBounds()
@@ -647,15 +671,16 @@ class GhostOverlayService : Service() {
             }
         )
         startLoop()
-        handler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
 
         // Feeding, playing or napping from the app writes straight to Prefs; catch it here too, so
         // he doesn't wait up to ten seconds to visibly react. A size or colour change from the
         // Style tab lands here too, resized/retinted in place rather than needing a restart.
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             noteEvent(key)
-            refreshMood()
-            syncAppearance()
+            // Any write at all used to trigger both of these — including the stats this very
+            // service writes on its own ten-second tick, and the sync layer's bookkeeping.
+            if (key in MOOD_KEYS) refreshMood()
+            if (key in LOOK_KEYS) syncAppearance()
         }
         prefsListener = listener
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
@@ -797,6 +822,8 @@ class GhostOverlayService : Service() {
             windowPx = newWindowPx
             headroomPx = GhostView.headroomPx(density, ghostPx)
             haloPadPx = GhostView.haloPadPx(ghostPx)
+            // The side room follows his size now, so it has to be recomputed here too.
+            sidePx = GhostView.bubbleSidePx(density, ghostPx)
             clampIntoBounds()
             params.width = windowPx + sidePx * 2
             params.height = windowPx + headroomPx + haloPadPx
@@ -1592,11 +1619,17 @@ class GhostOverlayService : Service() {
     private var lastAppliedX = Int.MIN_VALUE
     private var lastAppliedY = Int.MIN_VALUE
 
+    /** Smallest movement worth a window relayout — a dp, not a pixel. */
+    private var moveThresholdPx = 1
+
     private fun applyPosition() {
         val view = root ?: return
         val nx = posX.toInt()
         val ny = posY.toInt()
-        if (nx == lastAppliedX && ny == lastAppliedY) return
+        // Moving the window is a system relayout and recomposite — by far the most expensive thing
+        // done per frame. A single pixel of drift is not worth one, and at this speed the old
+        // pixel-exact test let almost every frame through.
+        if (abs(nx - lastAppliedX) < moveThresholdPx && abs(ny - lastAppliedY) < moveThresholdPx) return
         lastAppliedX = nx
         lastAppliedY = ny
         params.x = nx - sidePx
