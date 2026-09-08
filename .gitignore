@@ -11,6 +11,9 @@ captures/
 keystore.properties
 *.jks
 
+# Play Console publishing credentials
+play-service-account.json
+
 # Build artefacts kept out of the repo
 Ghostly-*.apk
 *.aab

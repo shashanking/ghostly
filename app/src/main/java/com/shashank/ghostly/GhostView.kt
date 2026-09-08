@@ -272,6 +272,14 @@ class GhostView(context: Context) : View(context) {
 
     /** Top of his square inside a view of height [h]: the wash keeps the strip below it. */
     private fun bodyTopFor(h: Float, w: Float): Float = (h - haloPadPx(w.toInt()) - w).coerceAtLeast(0f)
+    // Grabbing: a single decisive snap the instant he catches something — see startGrab.
+    private var grabbing = false
+    private var grabEndsAt = 0f
+
+    // Gift joy: big rounded eyes and a burst of hearts — see startGiftJoy.
+    private var giftJoy = false
+    private var giftJoyEndsAt = 0f
+    private var nextGiftHeartAt = 0f
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -509,6 +517,27 @@ class GhostView(context: Context) : View(context) {
     /** True while an eating animation is still playing. */
     fun isEating(): Boolean = eating
 
+    /** A single decisive mouth-snap the instant he catches something, with a happy wiggle and a
+     *  heart — distinct from eating's slower, repeating chomp. */
+    fun startGrab(durationSeconds: Float = 0.4f) {
+        grabbing = true
+        grabEndsAt = phase + durationSeconds
+        startWiggle()
+        spawnHeart()
+    }
+
+    /** Big rounded eyes and a burst of hearts for [durationSeconds] — played when he's just been
+     *  given a gift. */
+    fun startGiftJoy(durationSeconds: Float = 2f) {
+        giftJoy = true
+        giftJoyEndsAt = phase + durationSeconds
+        nextGiftHeartAt = phase
+        spawnHeart()
+        spawnHeart()
+        spawnHeart()
+        startWiggle()
+    }
+
     /** A small bump — used when the ghost hits the edge of the screen. */
     fun spookLightly() {
         startle = maxOf(startle, 0.45f)
@@ -563,6 +592,15 @@ class GhostView(context: Context) : View(context) {
                 eating = false
             } else if (phase > nextEatingHeartAt) {
                 nextEatingHeartAt = phase + 0.45f
+                spawnHeart()
+            }
+        }
+        if (grabbing && phase > grabEndsAt) grabbing = false
+        if (giftJoy) {
+            if (phase > giftJoyEndsAt) {
+                giftJoy = false
+            } else if (phase > nextGiftHeartAt) {
+                nextGiftHeartAt = phase + 0.35f
                 spawnHeart()
             }
         }
@@ -694,7 +732,7 @@ class GhostView(context: Context) : View(context) {
         // Face. Deliberately oversized — at this size a subtle face just disappears.
         // Each eye is a pale sclera with a dark pupil that actually travels inside it, so you can
         // see what he is looking at from across the room.
-        val eyeR = gw * (0.175f + 0.03f * startle + 0.02f * alert)
+        val eyeR = gw * (0.175f + 0.03f * startle + 0.02f * alert + 0.06f * (if (giftJoy) 1f else 0f))
         val eyeY = top + r * (1.0f - 0.05f * startle)
         val eyeDx = gw * 0.235f
         val pupilR = eyeR * 0.5f
@@ -785,6 +823,15 @@ class GhostView(context: Context) : View(context) {
             val chomp = 0.5f - 0.5f * cos(phase * 16f)
             val mouthW = gw * 0.15f
             val mouthH = gw * (0.03f + 0.16f * chomp)
+            rect.set(
+                cx - mouthW / 2f + sx * 0.5f, mouthY - mouthH / 2f,
+                cx + mouthW / 2f + sx * 0.5f, mouthY + mouthH / 2f
+            )
+            canvas.drawOval(rect, mouthPaint)
+        } else if (grabbing && !asleep) {
+            // A single decisive snap — wide open, held for the whole brief grab.
+            val mouthW = gw * 0.16f
+            val mouthH = gw * 0.14f
             rect.set(
                 cx - mouthW / 2f + sx * 0.5f, mouthY - mouthH / 2f,
                 cx + mouthW / 2f + sx * 0.5f, mouthY + mouthH / 2f

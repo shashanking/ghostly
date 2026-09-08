@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
 import android.view.Choreographer
 import android.view.Gravity
@@ -100,9 +101,22 @@ class OnboardingActivity : Activity() {
             finish()
             return
         }
+        // A rotation or a low-memory recreation (including the round trip to the system
+        // permission screen) would otherwise silently reset progress and avatar choice back to
+        // the very first step.
+        savedInstanceState?.getString(KEY_STEP)?.let { name ->
+            runCatching { Step.valueOf(name) }.getOrNull()?.let { currentStep = it }
+        }
+        savedInstanceState?.getString(KEY_SPECIES)?.let { id -> selectedSpecies = Species.fromId(id) }
         root = FrameLayout(this).apply { setBackgroundColor(Palette.ink) }
         setContentView(root)
-        goTo(Step.SPLASH)
+        goTo(currentStep)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_STEP, currentStep.name)
+        outState.putString(KEY_SPECIES, selectedSpecies.id)
     }
 
     override fun onResume() {
@@ -443,6 +457,12 @@ class OnboardingActivity : Activity() {
                     Toast.makeText(this@OnboardingActivity, "That didn't look like a Google account", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: GetCredentialException) {
+                // The real cause (SHA-1/config mismatch, no Google account on device, R8 having
+                // stripped something in a release build, etc.) matters a lot more than this toast
+                // lets on — it's swallowed otherwise, which makes a Play Store-only failure
+                // nearly undiagnosable. Logged, not shown, since the message is meaningless to a
+                // real user.
+                Log.e("GhostlyAuth", "Google sign-in failed: ${e::class.simpleName} — ${e.message}", e)
                 Toast.makeText(
                     this@OnboardingActivity,
                     "Sign-in didn't complete — you can try again or skip for now",
@@ -833,5 +853,8 @@ class OnboardingActivity : Activity() {
         // the ID token audience (serverClientId); Play Services separately checks the Android
         // client (package name + SHA-1) to confirm the calling app is legitimate.
         const val GOOGLE_WEB_CLIENT_ID = "736699818889-jio6642o3pl2c3mnok99ebvasjf2goro.apps.googleusercontent.com"
+
+        const val KEY_STEP = "onboarding_step"
+        const val KEY_SPECIES = "onboarding_species"
     }
 }

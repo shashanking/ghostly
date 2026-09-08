@@ -193,6 +193,11 @@ class MainActivity : Activity() {
      * bar clear of the name/streak/tokens, and the tab bar keeps the gesture nav clear of labels.
      */
     private fun applyEdgeToEdgeInsets() {
+        // WindowInsets.Type and the matching getInsets(Int) overload only exist from API 30 —
+        // referencing them unconditionally would crash on load on every Android 8–9 device this
+        // app (minSdk 26) is supposed to support. Older versions never draw under the system bars
+        // in the first place, so there's nothing to compensate for there.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val hudTop = hudBar.paddingTop
         val tabBottom = tabBar.paddingBottom
         hudBar.setOnApplyWindowInsetsListener { view, insets ->
@@ -594,6 +599,9 @@ class MainActivity : Activity() {
             if (Emotions.giveTreat(this@MainActivity)) {
                 pulse(treatCard)
                 Prefs.markFed(this@MainActivity)
+                // The animation plays on the Home tab's preview — jump there so it's actually seen
+                // rather than happening silently behind the Shop page.
+                showTab(AppTab.HOME)
                 playground.startFeeding()
                 refreshNeeds()
             } else {
@@ -610,6 +618,8 @@ class MainActivity : Activity() {
         ) {
             if (Emotions.giveGift(this@MainActivity)) {
                 pulse(giftCard)
+                showTab(AppTab.HOME)
+                playground.startGift()
                 refreshNeeds()
             } else {
                 toastNoTokens()
@@ -916,6 +926,7 @@ class MainActivity : Activity() {
 
         column.addView(sectionLabel("Trouble"))
         column.addView(settingsRowButton("Permission blocked by Android?", null) { openAppInfo() })
+        column.addView(settingsRowButton("Overlay permission not sticking?", null) { showOverlaySettingsGuide() })
 
         scroll.addView(column)
         return scroll
@@ -1168,6 +1179,45 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /**
+     * Heavily customised Android skins gate the floating overlay behind their OWN extra switch,
+     * separate from stock Android's "Display over other apps" screen — granting that alone isn't
+     * always enough on these phones, and there's no single API to detect or fix it, so this is a
+     * plain per-brand guide instead.
+     */
+    private fun showOverlaySettingsGuide() {
+        AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
+            .setTitle("Some phones hide a second switch")
+            .setMessage(
+                "Heavily customised phones (Xiaomi, Oppo, Vivo, and similar) often gate the " +
+                    "floating overlay behind their OWN extra permission, separate from the " +
+                    "standard \"Display over other apps\" screen you already granted. If he still " +
+                    "won't float, check your phone's brand:\n\n" +
+                    "XIAOMI / REDMI / POCO (MIUI or HyperOS)\n" +
+                    "Settings → Apps → Manage apps → Ghostly → Other permissions → turn on " +
+                    "\"Display pop-up windows while running in the background\" and \"Display " +
+                    "pop-up window\". Also open the Security app → Autostart, and allow Ghostly.\n\n" +
+                    "SAMSUNG (One UI)\n" +
+                    "Settings → Apps → Ghostly → turn on \"Allow background activity\", and set " +
+                    "battery usage to \"Unrestricted\" (Optimized isn't enough).\n\n" +
+                    "OPPO / REALME / ONEPLUS (ColorOS)\n" +
+                    "Settings → App management → Ghostly → Battery usage → allow background " +
+                    "running. Then Settings → Privacy → Permission manager → check \"Floating " +
+                    "window\" is on for Ghostly.\n\n" +
+                    "VIVO / IQOO (Funtouch OS / OriginOS)\n" +
+                    "Settings → Battery → Background power consumption management → find Ghostly " +
+                    "→ Allow. Then open i Manager → App manager → Autostart manager → enable " +
+                    "Ghostly.\n\n" +
+                    "ANY OTHER PHONE\n" +
+                    "Search your Settings app for \"floating window\", \"pop-up window\", " +
+                    "\"display over other apps\", or \"overlay\" — there's almost always a second " +
+                    "copy of this permission hiding somewhere in the phone-maker's own settings."
+            )
+            .setPositiveButton("Open app info") { _, _ -> openAppInfo() }
+            .setNegativeButton("Got it", null)
+            .show()
+    }
+
     private fun showRenameDialog() {
         val input = EditText(this).apply {
             setText(Prefs.name(this@MainActivity) ?: "")
@@ -1406,6 +1456,7 @@ class MainActivity : Activity() {
 
     private fun refreshNeeds() {
         val s = Emotions.snapshot(this)
+        playground.setMood(s.mood, s.body.sleeping)
         animateProgress(hungerBar, s.body.hunger.toInt())
         animateProgress(energyBar, s.body.energy.toInt())
         animateProgress(happinessBar, s.body.happiness.toInt())

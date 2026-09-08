@@ -70,6 +70,9 @@ class GhostPlayground @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
     }
     private val emptyPath = Path()
+    /** Set by [setMood] (from the Home tab's periodic refresh) — while true, idle wandering is
+     *  suspended so a sleeping pet actually reads as asleep here instead of drifting around. */
+    private var asleep = false
 
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#33FFFFFF")
@@ -91,11 +94,14 @@ class GhostPlayground @JvmOverloads constructor(
         pet()
     }
 
-    // Fetch: a toy to chase, started from the Play button.
-    private var fetching = false
+    // Fetch: a toy to chase, grab, and carry back home — started from the Play button.
+    private var fetchState = FetchState.NONE
     private var toyX = 0f
     private var toyY = 0f
     private var fetchEndsAt = 0f
+    private var grabEndsAt = 0f
+    private var fetchHomeX = 0f
+    private var fetchHomeY = 0f
     private val toyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFD166") }
     private val toyRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -103,16 +109,22 @@ class GhostPlayground @JvmOverloads constructor(
         color = Color.parseColor("#66C9A227")
     }
 
-    // Feeding: a treat drops from a corner, he sprints to it, then eats — started from Feed/Treat.
-    private var feedState = FeedState.NONE
-    private var treatX = 0f
-    private var treatY = 0f
-    private var treatVelY = 0f
-    private var treatLandY = 0f
-    private var eatEndsAt = 0f
-    private val treatDrawable = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
+    private enum class FetchState { NONE, CHASING, GRABBING, RETURNING }
 
-    private enum class FeedState { NONE, FALLING, CHASING, EATING }
+    // Delivery: a treat or gift drops from a corner, he sprints to it, then reacts — started from
+    // Feed/Treat/Gift.
+    private var deliveryState = DeliveryState.NONE
+    private var deliveryKind = DeliveryKind.TREAT
+    private var itemX = 0f
+    private var itemY = 0f
+    private var itemVelY = 0f
+    private var itemLandY = 0f
+    private var reactionEndsAt = 0f
+    private val treatDrawable = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
+    private val giftDrawable = IconDrawable(IconGlyph.GIFT, Color.parseColor("#E86BA8"))
+
+    private enum class DeliveryState { NONE, FALLING, CHASING, REACTING }
+    private enum class DeliveryKind { TREAT, GIFT }
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -261,30 +273,45 @@ class GhostPlayground @JvmOverloads constructor(
         ghost.setTint(hue)
     }
 
-    /** Drops a toy in for him to chase — called when Play succeeds. Purely a visual flourish; the
-     *  actual stat effects are already applied by the time this runs. */
+    /** Called from the Home tab's periodic refresh so this preview actually reflects his current
+     *  mood and sleep state, instead of always drawing an awake, drifting pet. */
+    fun setMood(mood: Mood, sleeping: Boolean) {
+        asleep = sleeping
+        ghost.setMood(mood, sleeping)
+    }
+
+    /** Drops a toy in for him to chase, grab, and carry back home — called when Play succeeds.
+     *  Purely a visual flourish; the actual stat effects are already applied by the time this
+     *  runs. */
     fun startFetch() {
         if (!placed || width <= 0 || height <= 0) return
         val margin = size * 0.6f
         toyX = margin + Random.nextFloat() * (width - margin * 2f).coerceAtLeast(1f)
         toyY = margin + Random.nextFloat() * (height - margin * 2f).coerceAtLeast(1f)
-        fetching = true
+        fetchHomeX = posX
+        fetchHomeY = posY
+        fetchState = FetchState.CHASING
         fetchEndsAt = clock + FETCH_TIMEOUT_SECONDS
         ghost.notice()
     }
 
     /** Drops a treat from a corner for him to sprint after and eat — called on Feed/Treat. Purely
      *  a visual flourish; the actual stat effects are already applied by the time this runs. */
-    fun startFeeding() {
-        ghost.showExpression(Expression.SMILE, 2.0f)
-        vocalise("hungry")
+    fun startFeeding() = startDelivery(DeliveryKind.TREAT)
+
+    /** Drops a gift from a corner for him to sprint after and unwrap — called on Gift. Purely a
+     *  visual flourish; the actual stat effects are already applied by the time this runs. */
+    fun startGift() = startDelivery(DeliveryKind.GIFT)
+
+    private fun startDelivery(kind: DeliveryKind) {
         if (!placed || width <= 0 || height <= 0) return
+        deliveryKind = kind
         val margin = size * 0.4f
-        treatX = if (Random.nextBoolean()) margin else width - margin
-        treatY = -size * 0.3f
-        treatVelY = 0f
-        treatLandY = height * (0.55f + Random.nextFloat() * 0.15f)
-        feedState = FeedState.FALLING
+        itemX = if (Random.nextBoolean()) margin else width - margin
+        itemY = -size * 0.3f
+        itemVelY = 0f
+        itemLandY = height * (0.55f + Random.nextFloat() * 0.15f)
+        deliveryState = DeliveryState.FALLING
         ghost.notice()
     }
 
@@ -426,15 +453,16 @@ class GhostPlayground @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (fetching) {
+        if (fetchState != FetchState.NONE) {
             val r = size * 0.16f
             canvas.drawCircle(toyX, toyY, r, toyPaint)
             canvas.drawCircle(toyX, toyY, r, toyRimPaint)
         }
-        if (feedState == FeedState.FALLING || feedState == FeedState.CHASING) {
+        if (deliveryState == DeliveryState.FALLING || deliveryState == DeliveryState.CHASING) {
             val r = (size * 0.18f).toInt()
-            treatDrawable.setBounds((treatX - r).toInt(), (treatY - r).toInt(), (treatX + r).toInt(), (treatY + r).toInt())
-            treatDrawable.draw(canvas)
+            val drawable = if (deliveryKind == DeliveryKind.TREAT) treatDrawable else giftDrawable
+            drawable.setBounds((itemX - r).toInt(), (itemY - r).toInt(), (itemX + r).toInt(), (itemY + r).toInt())
+            drawable.draw(canvas)
         }
         if (away) {
             drawEmpty(canvas)
@@ -495,13 +523,28 @@ class GhostPlayground @JvmOverloads constructor(
     private fun tick(dt: Float) {
         if (!placed || away) return
 
-        if (feedState != FeedState.NONE) {
-            tickFeeding(dt)
+        if (deliveryState != DeliveryState.NONE) {
+            tickDelivery(dt)
             return
         }
 
-        if (fetching) {
+        if (fetchState != FetchState.NONE) {
             tickFetch(dt)
+            return
+        }
+
+        if (asleep) {
+            // Settle to a stop and stay put rather than drifting off mid-nap — same rule as the
+            // overlay.
+            val settle = 1f - exp(-2.5f * dt)
+            velX -= velX * settle
+            velY -= velY * settle
+            posX += velX * dt
+            posY += velY * dt
+            ghost.setMotion(velX, velY)
+            ghost.advance(dt)
+            ghost.invalidate()
+            apply()
             return
         }
 
@@ -533,72 +576,130 @@ class GhostPlayground @JvmOverloads constructor(
         apply()
     }
 
-    /** He beelines for the toy instead of idle-wandering, until he reaches it or time runs out. */
+    /** He beelines for the toy, grabs it in his mouth, then carries it back home before letting
+     *  go — a proper fetch, not just a chase. */
     private fun tickFetch(dt: Float) {
-        val cx = posX + size / 2f
-        val cy = posY + size / 2f
-        val dx = toyX - cx
-        val dy = toyY - cy
-        val dist = hypot(dx, dy)
-        val caught = dist < size * 0.55f
-
-        if (caught || clock > fetchEndsAt) {
-            fetching = false
-            if (caught) ghost.spook() // a happy little bounce for the catch
-            ghost.advance(dt)
-            ghost.invalidate()
-            invalidate() // the toy itself is drawn by this view, not the ghost — it needs its own redraw
-            return
-        }
-
-        val eagerSpeed = driftSpeed * 6f
-        val settle = 1f - exp(-2.2f * dt)
-        velX += (dx / dist * eagerSpeed - velX) * settle
-        velY += (dy / dist * eagerSpeed - velY) * settle
-        posX += velX * dt
-        posY += velY * dt
-
-        val maxX = (width - size).toFloat()
-        val maxY = (height - size).toFloat()
-        posX = posX.coerceIn(0f, maxX)
-        posY = posY.coerceIn(0f, maxY)
-
-        ghost.setMotion(velX, velY)
-        ghost.lookAt(dx / dist, dy / dist)
-        ghost.advance(dt)
-        ghost.invalidate()
-        invalidate() // the toy itself is drawn by this view, not the ghost — it needs its own redraw
-        apply()
-    }
-
-    /** Falls to a landing spot, then he sprints over and eats — see [startFeeding]. */
-    private fun tickFeeding(dt: Float) {
-        when (feedState) {
-            FeedState.FALLING -> {
-                treatVelY += GRAVITY * density * dt
-                treatY += treatVelY * dt
-                if (treatY >= treatLandY) {
-                    treatY = treatLandY
-                    feedState = FeedState.CHASING
-                }
-                ghost.advance(dt)
-                ghost.invalidate()
-                invalidate() // the treat itself is drawn by this view, not the ghost
-            }
-            FeedState.CHASING -> {
+        when (fetchState) {
+            FetchState.CHASING -> {
                 val cx = posX + size / 2f
                 val cy = posY + size / 2f
-                val dx = treatX - cx
-                val dy = treatY - cy
+                val dx = toyX - cx
+                val dy = toyY - cy
                 val dist = hypot(dx, dy)
-                if (dist < size * 0.5f) {
-                    feedState = FeedState.EATING
-                    eatEndsAt = clock + EAT_DURATION
+                if (dist < size * 0.55f) {
+                    fetchState = FetchState.GRABBING
+                    grabEndsAt = clock + GRAB_DURATION
                     velX = 0f
                     velY = 0f
                     ghost.setMotion(0f, 0f)
-                    ghost.startEating(EAT_DURATION)
-                    invalidate() // treat is gone now — clear its last drawn position
+                    ghost.startGrab()
+                    invalidate()
+                } else if (clock > fetchEndsAt) {
+                    // Gave up — the toy just vanishes rather than making him trail an unclaimed one.
+                    fetchState = FetchState.NONE
+                    invalidate()
+                } else {
+                    val eagerSpeed = driftSpeed * 6f
+                    val settle = 1f - exp(-2.2f * dt)
+                    velX += (dx / dist * eagerSpeed - velX) * settle
+                    velY += (dy / dist * eagerSpeed - velY) * settle
+                    posX += velX * dt
+                    posY += velY * dt
+                    val maxX = (width - size).toFloat()
+                    val maxY = (height - size).toFloat()
+                    posX = posX.coerceIn(0f, maxX)
+                    posY = posY.coerceIn(0f, maxY)
+                    ghost.setMotion(velX, velY)
+                    ghost.lookAt(dx / dist, dy / dist)
+                    apply()
+                    invalidate() // the toy itself is drawn by this view, not the ghost
+                }
+                ghost.advance(dt)
+                ghost.invalidate()
+            }
+            FetchState.GRABBING -> {
+                // Held in his mouth while he savours the catch.
+                toyX = posX + size / 2f
+                toyY = posY + size * 0.62f
+                if (clock > grabEndsAt) fetchState = FetchState.RETURNING
+                ghost.advance(dt)
+                ghost.invalidate()
+                invalidate()
+            }
+            FetchState.RETURNING -> {
+                val dx = fetchHomeX - posX
+                val dy = fetchHomeY - posY
+                val dist = hypot(dx, dy)
+                toyX = posX + size / 2f
+                toyY = posY + size * 0.62f
+                if (dist < size * 0.25f) {
+                    fetchState = FetchState.NONE
+                    ghost.startWiggle()
+                    ghost.spawnHeart()
+                    invalidate()
+                } else {
+                    val speed = driftSpeed * 5f
+                    val settle = 1f - exp(-2.2f * dt)
+                    velX += (dx / dist * speed - velX) * settle
+                    velY += (dy / dist * speed - velY) * settle
+                    posX += velX * dt
+                    posY += velY * dt
+                    val maxX = (width - size).toFloat()
+                    val maxY = (height - size).toFloat()
+                    posX = posX.coerceIn(0f, maxX)
+                    posY = posY.coerceIn(0f, maxY)
+                    ghost.setMotion(velX, velY)
+                    ghost.lookAt(dx / dist, dy / dist)
+                    apply()
+                    invalidate()
+                }
+                ghost.advance(dt)
+                ghost.invalidate()
+            }
+            FetchState.NONE -> Unit
+        }
+    }
+
+    /** Falls to a landing spot, then he sprints over and reacts — eating a treat, or unwrapping a
+     *  gift — see [startFeeding]/[startGift]. */
+    private fun tickDelivery(dt: Float) {
+        when (deliveryState) {
+            DeliveryState.FALLING -> {
+                itemVelY += GRAVITY * density * dt
+                itemY += itemVelY * dt
+                if (itemY >= itemLandY) {
+                    itemY = itemLandY
+                    deliveryState = DeliveryState.CHASING
+                }
+                ghost.advance(dt)
+                ghost.invalidate()
+                invalidate() // the item itself is drawn by this view, not the ghost
+            }
+            DeliveryState.CHASING -> {
+                val cx = posX + size / 2f
+                val cy = posY + size / 2f
+                val dx = itemX - cx
+                val dy = itemY - cy
+                val dist = hypot(dx, dy)
+                if (dist < size * 0.5f) {
+                    deliveryState = DeliveryState.REACTING
+                    reactionEndsAt = clock + REACTION_DURATION
+                    velX = 0f
+                    velY = 0f
+                    ghost.setMotion(0f, 0f)
+                    // He says something as he gets it — the reaction moved here from the moment
+                    // the treat was dropped, so it lands with the catch rather than before it.
+                    when (deliveryKind) {
+                        DeliveryKind.TREAT -> {
+                            ghost.startEating(REACTION_DURATION)
+                            vocalise("happy")
+                        }
+                        DeliveryKind.GIFT -> {
+                            ghost.startGiftJoy(REACTION_DURATION)
+                            vocalise("affectionate")
+                        }
+                    }
+                    invalidate() // item is gone now — clear its last drawn position
                 } else {
                     val sprintSpeed = driftSpeed * 9f
                     val settle = 1f - exp(-3f * dt)
@@ -617,12 +718,12 @@ class GhostPlayground @JvmOverloads constructor(
                 ghost.advance(dt)
                 ghost.invalidate()
             }
-            FeedState.EATING -> {
-                if (clock > eatEndsAt) feedState = FeedState.NONE
+            DeliveryState.REACTING -> {
+                if (clock > reactionEndsAt) deliveryState = DeliveryState.NONE
                 ghost.advance(dt)
                 ghost.invalidate()
             }
-            FeedState.NONE -> Unit
+            DeliveryState.NONE -> Unit
         }
     }
 
@@ -659,7 +760,8 @@ class GhostPlayground @JvmOverloads constructor(
         const val PET_HOLD_MS = 1_000L
         const val PET_ANIMATION_MS = 2_000L
         const val FETCH_TIMEOUT_SECONDS = 6f
+        const val GRAB_DURATION = 0.6f
         const val GRAVITY = 900f
-        const val EAT_DURATION = 1.6f
+        const val REACTION_DURATION = 1.6f
     }
 }

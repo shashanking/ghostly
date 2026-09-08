@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.github.triplet.play")
 }
 
 // Release signing details live in keystore.properties (kept out of version control).
@@ -72,4 +73,17 @@ dependencies {
     // Play in-app updates: the only way to know a newer build is live on Play and to install it
     // without sending the user out to the store listing.
     implementation("com.google.android.play:app-update:2.1.0")
+}
+
+// Gradle Play Publisher — `./gradlew publishBundle` uploads the signed release AAB straight to
+// the internal testing track via the Play Developer API. Needs a service account JSON key at
+// play-service-account.json (kept out of version control, like keystore.properties); until that
+// file exists, publish tasks simply aren't usable but every other build task is unaffected.
+play {
+    val serviceAccountFile = rootProject.file("play-service-account.json")
+    if (serviceAccountFile.exists()) {
+        serviceAccountCredentials.set(serviceAccountFile)
+    }
+    track.set("internal")
+    defaultToAppBundles.set(true)
 }
