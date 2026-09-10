@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12 and up. His name, look, stats and streak are worth restoring onto a new phone; his
+  session token is not — it is a bearer credential, and a backup is a copy of it sitting somewhere
+  we do not control, restorable onto a device that was never signed in.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="ghostly-session.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="ghostly-session.xml" />
+    </device-transfer>
+</data-extraction-rules>

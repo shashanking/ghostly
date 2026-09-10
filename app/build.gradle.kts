@@ -48,6 +48,14 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // The pack is real JSON. Android's unit-test stub of org.json throws on every call, so
+            // the tests pull in a real implementation and this stops the stub getting in the way.
+            isReturnDefaultValues = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -61,6 +69,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+
     // Google Sign-In (Credential Manager, Google's current recommended API) is the one deliberate
     // exception to this app's zero-dependency policy — there's no platform SDK path to it.
     implementation("androidx.credentials:credentials:1.3.0")

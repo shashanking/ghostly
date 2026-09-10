@@ -237,14 +237,14 @@ class OnboardingActivity : Activity() {
         col.addView(ghost, LinearLayout.LayoutParams(dp(96), dp(96)))
         startIdlePreview(ghost)
         col.addView(TextView(this).apply {
-            text = "Ghostly"
+            text = getString(R.string.ghostly)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
             typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(18) }
         })
         col.addView(TextView(this).apply {
-            text = "Your Ghostly is loading…"
+            text = getString(R.string.your_ghostly_is_loading)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) }
@@ -268,7 +268,7 @@ class OnboardingActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "Skip"
+            text = getString(R.string.skip)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.END
@@ -383,14 +383,14 @@ class OnboardingActivity : Activity() {
         column.addView(hero)
 
         column.addView(TextView(this).apply {
-            text = "Welcome to Ghostly"
+            text = getString(R.string.welcome_to_ghostly)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             typeface = serifFace
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(24) }
         })
         column.addView(TextView(this).apply {
-            text = "Sign in with Google so this Ghostly stays yours."
+            text = getString(R.string.onboarding_login_body)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
@@ -398,7 +398,7 @@ class OnboardingActivity : Activity() {
         })
 
         column.addView(Button(this).apply {
-            text = "Continue with Google"
+            text = getString(R.string.continue_with_google)
             isAllCaps = false
             stateListAnimator = null
             setTextColor(Palette.ink)
@@ -411,7 +411,7 @@ class OnboardingActivity : Activity() {
         })
 
         column.addView(TextView(this).apply {
-            text = "Skip for now"
+            text = getString(R.string.skip_for_now)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
@@ -454,7 +454,7 @@ class OnboardingActivity : Activity() {
                     ).show()
                     goTo(Step.AVATAR)
                 } else {
-                    Toast.makeText(this@OnboardingActivity, "That didn't look like a Google account", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@OnboardingActivity, getString(R.string.that_didn_t_look_like_a_google_account), Toast.LENGTH_SHORT).show()
                 }
             } catch (e: GetCredentialException) {
                 // The real cause (SHA-1/config mismatch, no Google account on device, R8 having
@@ -479,13 +479,13 @@ class OnboardingActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "Choose your Ghost"
+            text = getString(R.string.choose_your_ghost)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             typeface = serifFace
         })
         column.addView(TextView(this).apply {
-            text = "You can change all of this later in Style."
+            text = getString(R.string.onboarding_avatar_hint)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
@@ -505,7 +505,7 @@ class OnboardingActivity : Activity() {
         // Naming him is what turns a floating shape into someone's ghost, so it sits right here
         // with the choice of what he is. Left blank he is simply "Ghost", and can be named later.
         column.addView(TextView(this).apply {
-            text = "AND HIS NAME"
+            text = getString(R.string.and_his_name)
             setTextColor(Palette.textFaint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
             letterSpacing = 0.16f
@@ -513,7 +513,7 @@ class OnboardingActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(26) }
         })
         nameField = EditText(this).apply {
-            hint = "Give him a name"
+            hint = getString(R.string.give_him_a_name)
             setHintTextColor(Palette.textFaint)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
@@ -529,7 +529,7 @@ class OnboardingActivity : Activity() {
         column.addView(nameField)
 
         column.addView(Button(this).apply {
-            text = "Continue"
+            text = getString(R.string.action_continue)
             isAllCaps = false
             stateListAnimator = null
             // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
@@ -598,13 +598,13 @@ class OnboardingActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "One more thing"
+            text = getString(R.string.one_more_thing)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             typeface = serifFace
         })
         column.addView(TextView(this).apply {
-            text = "Ghostly needs a couple of permissions to actually float."
+            text = getString(R.string.onboarding_permissions_body)
             setTextColor(Palette.dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
@@ -633,7 +633,7 @@ class OnboardingActivity : Activity() {
         )
 
         column.addView(Button(this).apply {
-            text = "Continue"
+            text = getString(R.string.action_continue)
             isAllCaps = false
             stateListAnimator = null
             // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is
@@ -709,14 +709,14 @@ class OnboardingActivity : Activity() {
 
         if (granted) {
             row.addView(TextView(this).apply {
-                text = "Granted"
+                text = getString(R.string.granted)
                 setTextColor(Palette.mint)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 typeface = uiMedium
             })
         } else {
             row.addView(Button(this).apply {
-                text = "Grant"
+                text = getString(R.string.grant)
                 isAllCaps = false
                 stateListAnimator = null
                 setTextColor(Color.WHITE)
@@ -753,7 +753,7 @@ class OnboardingActivity : Activity() {
 
         val name = Prefs.userDisplayName(this)?.substringBefore(" ")
         column.addView(TextView(this).apply {
-            text = "You're all set!"
+            text = getString(R.string.you_re_all_set)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
             typeface = serifFace
@@ -768,7 +768,7 @@ class OnboardingActivity : Activity() {
         })
 
         column.addView(Button(this).apply {
-            text = "Let him float"
+            text = getString(R.string.let_him_float)
             isAllCaps = false
             stateListAnimator = null
             // Ink on bone. The accent is near-white in this palette, so white-on-accent — which is

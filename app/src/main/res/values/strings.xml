@@ -2,4 +2,63 @@
     <string name="app_name">Ghostly</string>
     <string name="channel_name">Floating ghost</string>
     <string name="channel_desc">Keeps the ghost floating above other apps.</string>
+
+    <!-- Spoken by TalkBack. The app is drawn rather than laid out from widgets, so without these
+         a screen reader finds nothing to announce at all. -->
+    <string name="a11y_tab">%1$s tab</string>
+    <string name="a11y_tab_selected">%1$s tab, selected</string>
+    <string name="a11y_box">Your ghost\'s box. Hold him to pet him.</string>
+
+    <!-- Screen text. Kept here so the app can be translated. -->
+    <string name="blocked_explainer">That block is Android\'s, not Ghostly\'s — it applies to any app installed outside the Play Store. Unlock it once:\n\n1.  Open app info below\n2.  Tap  ⋮  in the top-right corner\n3.  Tap \"Allow restricted settings\"\n4.  Come back and grant \"Display over other apps\"</string>
+    <string name="open_app_info">Open app info</string>
+    <string name="shop">Shop</string>
+    <string name="shop_intro">Feed and letting him nap are always free. Everything below runs on a daily allowance of tokens.</string>
+    <string name="tokens_left_today">tokens left today</string>
+    <string name="style">Style</string>
+    <string name="settings">Settings</string>
+    <string name="settings_behaviour_body">He is intangible out there: every tap goes straight through him, so nothing he floats over is ever blocked. Feeding and petting happen in his box on the Home tab — that is the one place he can be touched.</string>
+    <string name="buzz_when_he_runs">Buzz when he runs</string>
+    <string name="settings_battery_body">Phones put background apps to sleep to save battery — Samsung especially. If Ghostly stops floating after an hour or two, set his battery usage to Unrestricted and turn off \"Put app to sleep\" for him.</string>
+    <string name="settings_account_body">Signing in keeps your ghost if you change phone, and keeps his token balance honest. He works exactly the same without it.</string>
+    <string name="ghostly">Ghostly</string>
+    <string name="delete_your_account">Delete your account?</string>
+    <string name="a_new_ghostly">A new Ghostly</string>
+    <string name="some_phones_hide_a_second_switch">Some phones hide a second switch</string>
+    <string name="what_s_his_name">What\'s his name?</string>
+    <string name="delete">Delete</string>
+    <string name="update">Update</string>
+    <string name="save">Save</string>
+    <string name="keep_it">Keep it</string>
+    <string name="not_now">Not now</string>
+    <string name="got_it">Got it</string>
+    <string name="cancel">Cancel</string>
+    <string name="out_of_tokens_for_today_more_tomorrow">Out of tokens for today — more tomorrow</string>
+    <string name="opening_google_sign_in">Opening Google sign-in…</string>
+    <string name="sign_in_didn_t_complete">Sign-in didn\'t complete</string>
+    <string name="account_deleted">Account deleted</string>
+    <string name="couldn_t_reach_the_server_try_again_later">Couldn\'t reach the server — try again later</string>
+    <string name="find_ghostly_and_allow_it_to_run_in_the_back">Find Ghostly and allow it to run in the background</string>
+    <string name="open_settings_apps_ghostly">Open Settings › Apps › Ghostly</string>
+    <string name="couldn_t_create_the_share_card">Couldn\'t create the share card</string>
+    <string name="turn_ghostly_on_then_come_back">Turn Ghostly on, then come back</string>
+    <string name="too_worn_out_to_play_right_now">Too worn out to play right now</string>
+    <string name="your_ghostly_is_loading">Your Ghostly is loading…</string>
+    <string name="skip">Skip</string>
+    <string name="welcome_to_ghostly">Welcome to Ghostly</string>
+    <string name="onboarding_login_body">Sign in with Google so this Ghostly stays yours.</string>
+    <string name="continue_with_google">Continue with Google</string>
+    <string name="skip_for_now">Skip for now</string>
+    <string name="choose_your_ghost">Choose your Ghost</string>
+    <string name="onboarding_avatar_hint">You can change all of this later in Style.</string>
+    <string name="and_his_name">AND HIS NAME</string>
+    <string name="action_continue">Continue</string>
+    <string name="one_more_thing">One more thing</string>
+    <string name="onboarding_permissions_body">Ghostly needs a couple of permissions to actually float.</string>
+    <string name="granted">Granted</string>
+    <string name="grant">Grant</string>
+    <string name="you_re_all_set">You\'re all set!</string>
+    <string name="let_him_float">Let him float</string>
+    <string name="give_him_a_name">Give him a name</string>
+    <string name="that_didn_t_look_like_a_google_account">That didn\'t look like a Google account</string>
 </resources>

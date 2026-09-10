@@ -10,6 +10,14 @@ fun epochDay(): Long = System.currentTimeMillis() / 86_400_000L
 /** Tiny wrapper around the app's SharedPreferences. */
 object Prefs {
     private const val FILE = "ghostly"
+
+    /**
+     * Credentials live in their own file so backup can leave them out. Android's auto-backup works
+     * a whole prefs file at a time — there is no way to exclude one key — and a bearer token that
+     * is still valid for a month has no business being copied into cloud backup and restored onto
+     * some other device.
+     */
+    private const val SESSION_FILE = "ghostly-session"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_X = "x"
     private const val KEY_Y = "y"
@@ -259,15 +267,32 @@ object Prefs {
 
     // ---- server side ------------------------------------------------------------------------
 
-    fun sessionToken(context: Context): String? = prefs(context).getString(KEY_SESSION_TOKEN, null)
-    fun userId(context: Context): String? = prefs(context).getString(KEY_USER_ID, null)
-    fun saveSession(context: Context, token: String, userId: String?) =
-        prefs(context).edit().putString(KEY_SESSION_TOKEN, token).putString(KEY_USER_ID, userId).apply()
-    fun clearSession(context: Context) =
-        prefs(context).edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID).remove(KEY_PET_SERVER_ID).apply()
+    private fun session(context: Context): SharedPreferences {
+        val file = context.getSharedPreferences(SESSION_FILE, Context.MODE_PRIVATE)
+        // Anyone signed in before this file existed still has their token in the main one. Move it
+        // across on first read, then take it out of the file that gets backed up.
+        val stale = prefs(context)
+        if (stale.contains(KEY_SESSION_TOKEN)) {
+            file.edit()
+                .putString(KEY_SESSION_TOKEN, stale.getString(KEY_SESSION_TOKEN, null))
+                .putString(KEY_USER_ID, stale.getString(KEY_USER_ID, null))
+                .putString(KEY_PET_SERVER_ID, stale.getString(KEY_PET_SERVER_ID, null))
+                .apply()
+            stale.edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID).remove(KEY_PET_SERVER_ID).apply()
+        }
+        return file
+    }
 
-    fun petServerId(context: Context): String? = prefs(context).getString(KEY_PET_SERVER_ID, null)
-    fun savePetServerId(context: Context, id: String) = prefs(context).edit().putString(KEY_PET_SERVER_ID, id).apply()
+    fun sessionToken(context: Context): String? = session(context).getString(KEY_SESSION_TOKEN, null)
+    fun userId(context: Context): String? = session(context).getString(KEY_USER_ID, null)
+    fun saveSession(context: Context, token: String, userId: String?) =
+        session(context).edit().putString(KEY_SESSION_TOKEN, token).putString(KEY_USER_ID, userId).apply()
+    fun clearSession(context: Context) =
+        session(context).edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID).remove(KEY_PET_SERVER_ID).apply()
+
+    fun petServerId(context: Context): String? = session(context).getString(KEY_PET_SERVER_ID, null)
+    fun savePetServerId(context: Context, id: String) =
+        session(context).edit().putString(KEY_PET_SERVER_ID, id).apply()
 
     /** The stats timestamp last accepted by the server — see the note in [ContentSync]. */
     fun lastSyncedStatsAt(context: Context) = prefs(context).getLong(KEY_LAST_SYNCED_STATS_AT, 0L)

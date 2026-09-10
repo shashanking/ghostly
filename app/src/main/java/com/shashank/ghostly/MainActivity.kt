@@ -253,11 +253,25 @@ class MainActivity : Activity() {
 
     /** On a tablet a full-width column reads badly, so cap it and centre it like a large-screen
      *  layout is expected to behave. */
+    /**
+     * Keeps a phone-shaped column on a tablet rather than stretching everything to the width of the
+     * screen. On a large screen it is centred both ways: capped to 600dp it would otherwise sit in
+     * the top half with a screenful of black underneath, which reads as an app that has not been
+     * looked at on a tablet.
+     */
     private fun capWidth(content: View): View {
         val maxWidth = dp(600)
-        val columnWidth = if (resources.displayMetrics.widthPixels > maxWidth) maxWidth else MATCH_PARENT
+        val wide = resources.displayMetrics.widthPixels > maxWidth
+        val large = resources.configuration.smallestScreenWidthDp >= 600
+        val gravity = Gravity.CENTER_HORIZONTAL or if (large) Gravity.CENTER_VERTICAL else Gravity.TOP
         return FrameLayout(this).apply {
-            addView(content, FrameLayout.LayoutParams(columnWidth, MATCH_PARENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    if (wide) maxWidth else MATCH_PARENT,
+                    if (large) WRAP_CONTENT else MATCH_PARENT,
+                ).apply { this.gravity = gravity },
+            )
         }
     }
 
@@ -358,6 +372,9 @@ class MainActivity : Activity() {
             val selected = entry.tab == tab
             entry.icon.setImageDrawable(IconDrawable(entry.glyph, if (selected) accent else dim))
             entry.label.setTextColor(if (selected) accent else dim)
+            entry.container.isSelected = selected
+            entry.container.contentDescription =
+                getString(if (selected) R.string.a11y_tab_selected else R.string.a11y_tab, entry.label.text)
         }
         refreshState()
     }
@@ -376,6 +393,7 @@ class MainActivity : Activity() {
         playground = GhostPlayground(this).apply {
             // Reaching into the empty box while he is out is a way of asking for him.
             onSummon = { visitBox() }
+            contentDescription = getString(R.string.a11y_box)
             background = rounded(card, dp(28).toFloat(), cardStroke)
             elevation = dp(3).toFloat()
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(348)).apply { topMargin = dp(4) }
@@ -450,7 +468,7 @@ class MainActivity : Activity() {
                 }
                 Emotions.PlayOutcome.NO_TOKENS -> toastNoTokens()
                 Emotions.PlayOutcome.TOO_TIRED ->
-                    Toast.makeText(this@MainActivity, "Too worn out to play right now", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, getString(R.string.too_worn_out_to_play_right_now), Toast.LENGTH_SHORT).show()
             }
         }
         playRoot = play.root
@@ -515,12 +533,7 @@ class MainActivity : Activity() {
         })
 
         addView(TextView(this@MainActivity).apply {
-            text = "That block is Android's, not Ghostly's — it applies to any app installed " +
-                "outside the Play Store. Unlock it once:\n\n" +
-                "1.  Open app info below\n" +
-                "2.  Tap  ⋮  in the top-right corner\n" +
-                "3.  Tap \"Allow restricted settings\"\n" +
-                "4.  Come back and grant \"Display over other apps\""
+            text = getString(R.string.blocked_explainer)
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -529,7 +542,7 @@ class MainActivity : Activity() {
         })
 
         addView(Button(this@MainActivity).apply {
-            text = "Open app info"
+            text = getString(R.string.open_app_info)
             isAllCaps = false
             stateListAnimator = null
             setTextColor(Color.WHITE)
@@ -553,14 +566,13 @@ class MainActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "Shop"
+            text = getString(R.string.shop)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             typeface = serifFace
         })
         column.addView(TextView(this).apply {
-            text = "Feed and letting him nap are always free. Everything below runs on a daily " +
-                "allowance of tokens."
+            text = getString(R.string.shop_intro)
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -584,7 +596,7 @@ class MainActivity : Activity() {
         }
         tokensCard.addView(tokensBigText)
         tokensCard.addView(TextView(this).apply {
-            text = "tokens left today"
+            text = getString(R.string.tokens_left_today)
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         })
@@ -710,7 +722,7 @@ class MainActivity : Activity() {
     }
 
     private fun toastNoTokens() =
-        Toast.makeText(this, "Out of tokens for today — more tomorrow", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.out_of_tokens_for_today_more_tomorrow), Toast.LENGTH_SHORT).show()
 
     // endregion
 
@@ -724,7 +736,7 @@ class MainActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "Style"
+            text = getString(R.string.style)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             typeface = serifFace
@@ -858,7 +870,7 @@ class MainActivity : Activity() {
         }
 
         column.addView(TextView(this).apply {
-            text = "Settings"
+            text = getString(R.string.settings)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             typeface = serifFace
@@ -866,9 +878,7 @@ class MainActivity : Activity() {
 
         column.addView(sectionLabel("Behaviour"))
         column.addView(TextView(this).apply {
-            text = "He is intangible out there: every tap goes straight through him, so nothing " +
-                "he floats over is ever blocked. Feeding and petting happen in his box on the " +
-                "Home tab — that is the one place he can be touched."
+            text = getString(R.string.settings_behaviour_body)
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -876,7 +886,7 @@ class MainActivity : Activity() {
         })
 
         column.addView(Switch(this).apply {
-            text = "Buzz when he runs"
+            text = getString(R.string.buzz_when_he_runs)
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = Type.sans(this@MainActivity)
@@ -889,9 +899,7 @@ class MainActivity : Activity() {
 
         column.addView(sectionLabel("If he vanishes"))
         column.addView(TextView(this).apply {
-            text = "Phones put background apps to sleep to save battery — Samsung especially. If " +
-                "Ghostly stops floating after an hour or two, set his battery usage to " +
-                "Unrestricted and turn off \"Put app to sleep\" for him."
+            text = getString(R.string.settings_battery_body)
             setTextColor(dim)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setLineSpacing(dp(3).toFloat(), 1f)
@@ -951,8 +959,7 @@ class MainActivity : Activity() {
         } else {
             actions.addView(settingsRowButton("Sign in with Google", null) { signInFromSettings() })
             actions.addView(TextView(this).apply {
-                text = "Signing in keeps your ghost if you change phone, and keeps his token " +
-                    "balance honest. He works exactly the same without it."
+                text = getString(R.string.settings_account_body)
                 setTextColor(Palette.textFaint)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setLineSpacing(dp(3).toFloat(), 1f)
@@ -968,7 +975,7 @@ class MainActivity : Activity() {
             .setServerClientId(OnboardingActivity.GOOGLE_WEB_CLIENT_ID)
             .build()
         val request = androidx.credentials.GetCredentialRequest.Builder().addCredentialOption(option).build()
-        Toast.makeText(this, "Opening Google sign-in…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.opening_google_sign_in), Toast.LENGTH_SHORT).show()
         Thread {
             val result = runCatching {
                 kotlinx.coroutines.runBlocking {
@@ -983,7 +990,7 @@ class MainActivity : Activity() {
             if (idToken == null) {
                 val why = result.exceptionOrNull()?.message ?: "no Google credential offered"
                 android.util.Log.w("GhostlyAuth", "sign-in failed: $why")
-                runOnUiThread { Toast.makeText(this, "Sign-in didn't complete", Toast.LENGTH_LONG).show() }
+                runOnUiThread { Toast.makeText(this, getString(R.string.sign_in_didn_t_complete), Toast.LENGTH_LONG).show() }
                 return@Thread
             }
             Prefs.saveSignedInUser(this, idToken.id, idToken.displayName)
@@ -1003,22 +1010,22 @@ class MainActivity : Activity() {
      */
     private fun confirmDeleteAccount() {
         android.app.AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
-            .setTitle("Delete your account?")
+            .setTitle(getString(R.string.delete_your_account))
             .setMessage(
                 "This removes your account and everything saved on the server: your pets, their " +
                     "stats and history. The pet on this phone stays, but he'll no longer sync."
             )
-            .setNegativeButton("Keep it", null)
-            .setPositiveButton("Delete") { _, _ ->
+            .setNegativeButton(getString(R.string.keep_it), null)
+            .setPositiveButton(getString(R.string.delete)) { _, _ ->
                 Thread {
                     val ok = runCatching { GhostlyApi.deleteAccount(applicationContext) }.getOrDefault(false)
                     runOnUiThread {
                         if (ok) {
                             Prefs.saveSignedInUser(this, null, null)
-                            Toast.makeText(this, "Account deleted", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, getString(R.string.account_deleted), Toast.LENGTH_LONG).show()
                             showTab(AppTab.SETTINGS)
                         } else {
-                            Toast.makeText(this, "Couldn't reach the server — try again later", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, getString(R.string.couldn_t_reach_the_server_try_again_later), Toast.LENGTH_LONG).show()
                         }
                     }
                 }.start()
@@ -1068,7 +1075,7 @@ class MainActivity : Activity() {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (batteryList.resolveActivity(packageManager) != null) {
             startActivity(batteryList)
-            Toast.makeText(this, "Find Ghostly and allow it to run in the background", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.find_ghostly_and_allow_it_to_run_in_the_back), Toast.LENGTH_LONG).show()
         } else {
             openAppInfo()
         }
@@ -1080,7 +1087,7 @@ class MainActivity : Activity() {
             Uri.parse("package:$packageName")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { startActivity(intent) }
-            .onFailure { Toast.makeText(this, "Open Settings › Apps › Ghostly", Toast.LENGTH_LONG).show() }
+            .onFailure { Toast.makeText(this, getString(R.string.open_settings_apps_ghostly), Toast.LENGTH_LONG).show() }
     }
 
     /** Renders his current look and stats to a PNG in the private share cache, then hands it to
@@ -1101,7 +1108,7 @@ class MainActivity : Activity() {
             }
             startActivity(Intent.createChooser(intent, "Share ${petName()}"))
         }.onFailure {
-            Toast.makeText(this, "Couldn't create the share card", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.couldn_t_create_the_share_card), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1173,13 +1180,13 @@ class MainActivity : Activity() {
     private fun offerUpdate(start: () -> Unit) {
         if (isFinishing || isDestroyed) return
         AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
-            .setTitle("A new Ghostly")
+            .setTitle(getString(R.string.a_new_ghostly))
             .setMessage(
                 "There's a newer version on the Play Store. It downloads in the background — " +
                     "he keeps floating while it does."
             )
-            .setNegativeButton("Not now") { _, _ -> AppUpdates.snooze(this) }
-            .setPositiveButton("Update") { _, _ -> start() }
+            .setNegativeButton(getString(R.string.not_now)) { _, _ -> AppUpdates.snooze(this) }
+            .setPositiveButton(getString(R.string.update)) { _, _ -> start() }
             .show()
     }
 
@@ -1191,7 +1198,7 @@ class MainActivity : Activity() {
      */
     private fun showOverlaySettingsGuide() {
         AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
-            .setTitle("Some phones hide a second switch")
+            .setTitle(getString(R.string.some_phones_hide_a_second_switch))
             .setMessage(
                 "Heavily customised phones (Xiaomi, Oppo, Vivo, and similar) often gate the " +
                     "floating overlay behind their OWN extra permission, separate from the " +
@@ -1217,15 +1224,15 @@ class MainActivity : Activity() {
                     "\"display over other apps\", or \"overlay\" — there's almost always a second " +
                     "copy of this permission hiding somewhere in the phone-maker's own settings."
             )
-            .setPositiveButton("Open app info") { _, _ -> openAppInfo() }
-            .setNegativeButton("Got it", null)
+            .setPositiveButton(getString(R.string.open_app_info)) { _, _ -> openAppInfo() }
+            .setNegativeButton(getString(R.string.got_it), null)
             .show()
     }
 
     private fun showRenameDialog() {
         val input = EditText(this).apply {
             setText(Prefs.name(this@MainActivity) ?: "")
-            hint = "Ghostly"
+            hint = getString(R.string.ghostly)
             setTextColor(Color.WHITE)
             setHintTextColor(dim)
             setSingleLine()
@@ -1233,14 +1240,14 @@ class MainActivity : Activity() {
             setPadding(dp(24), dp(12), dp(24), dp(12))
         }
         AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
-            .setTitle("What's his name?")
+            .setTitle(getString(R.string.what_s_his_name))
             .setView(input)
-            .setPositiveButton("Save") { _, _ ->
+            .setPositiveButton(getString(R.string.save)) { _, _ ->
                 Prefs.setName(this, input.text.toString())
                 refreshNeeds()
                 runCatching { GhostlyWidgetProvider.refreshAll(this) }
             }
-            .setNegativeButton("Cancel", null)
+            .setNegativeButton(getString(R.string.cancel), null)
             .show()
     }
 
@@ -1267,7 +1274,9 @@ class MainActivity : Activity() {
         GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(startColor, endColor)
     ).apply { cornerRadius = radius }
 
+    /** Purely decorative: every icon in this app sits next to text that already says what it is. */
     private fun iconView(glyph: IconGlyph, tint: Int, sizeDp: Int) = ImageView(this).apply {
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         setImageDrawable(IconDrawable(glyph, tint))
         layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
     }
@@ -1354,6 +1363,10 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, dp(76), 1f).apply { if (leftMargin) marginStart = dp(10) }
             isClickable = true
             isFocusable = true
+            // The card is the button. Announced as one thing, so a screen reader says "Feed" once
+            // rather than walking an icon and a label that mean nothing apart.
+            contentDescription = text
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             setOnClickListener { onClick() }
         }
         root.addView(iconView(glyph, mint, 22))
@@ -1626,7 +1639,7 @@ class MainActivity : Activity() {
                     Uri.parse("package:$packageName")
                 )
             )
-            Toast.makeText(this, "Turn Ghostly on, then come back", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.turn_ghostly_on_then_come_back), Toast.LENGTH_LONG).show()
             return
         }
 
