@@ -393,11 +393,14 @@ class GhostOverlayService : Service() {
             // A slow drifting ghost does not need 60 or 120 frames a second, and every frame moves
             // a window, which is far from free — measured at roughly double the CPU at 45fps versus
             // 30. Thirty is indistinguishable at this speed.
-            // Thirty frames a second is for things you are watching happen: a routine, a flight,
-            // a drag. Plain drifting moves him about a pixel and a half per frame, and a sleeping
-            // ghost only breathes — neither is worth the same budget.
+            // What makes stepping visible is SPEED, not what he happens to be doing. Splitting the
+            // budget by state got this wrong: a zoomies launch sets no routine, so it dropped to
+            // fifteen frames while moving over a thousand pixels a second — a hundred-pixel jump
+            // per frame, which is exactly as choppy as it sounds. Anything moving faster than a
+            // gentle drift gets the full rate; only genuinely slow motion is allowed to save.
+            val movingFast = hypot(velX, velY) > driftSpeed * 2f
             val minFrame = when {
-                routine != null || homing || dragging -> MIN_FRAME_SECONDS
+                movingFast || routine != null || homing || dragging -> MIN_FRAME_SECONDS
                 sleeping -> SLEEP_FRAME_SECONDS
                 else -> IDLE_FRAME_SECONDS
             }
