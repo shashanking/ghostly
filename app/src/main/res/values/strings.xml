@@ -63,4 +63,9 @@
     <string name="that_didn_t_look_like_a_google_account">That didn\'t look like a Google account</string>
     <string name="settings_touchable">Let him be touched out there</string>
     <string name="settings_touchable_body">Off, he is intangible: every tap goes straight through him to whatever is underneath. On, you can tap and drag him over other apps — but taps that land on him no longer reach the app behind.</string>
+    <string name="quick_feed">Feed</string>
+    <string name="quick_play">Play</string>
+    <string name="quick_pet">Pet</string>
+    <string name="quick_nap">Nap</string>
+    <string name="quick_wake">Wake</string>
 </resources>

@@ -145,6 +145,13 @@ class GhostOverlayService : Service() {
         private const val HOMING_TIMEOUT_SECONDS = 4f
 
         private const val PET_HOLD_MS = 1_000L
+
+        /** How long the quick actions wait to be used before taking themselves away. It is sitting
+         *  on top of somebody else's app; it should not need dismissing. */
+        private const val MENU_IDLE_MS = 6_000L
+
+        /** Air between him and the row of buttons, so the two read as separate things. */
+        private const val MENU_GAP_DP = 10f
         private const val PET_ANIMATION_MS = 2_000L
         private const val DOUBLE_TAP_MS = 300L
 
@@ -423,7 +430,13 @@ class GhostOverlayService : Service() {
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> stopLoop()
+                Intent.ACTION_SCREEN_OFF -> {
+                    // The menu is anchored to a pet who is about to stop moving behind a dark
+                    // screen. Leaving it up means finding it again on unlock, over whatever is
+                    // there by then.
+                    closeQuickActions()
+                    stopLoop()
+                }
                 Intent.ACTION_SCREEN_ON -> startLoop()
                 Intent.ACTION_USER_PRESENT -> {
                     Prefs.recordUnlock(this@GhostOverlayService)
@@ -486,6 +499,9 @@ class GhostOverlayService : Service() {
      * instant and none of his position or state is lost.
      */
     private fun setVisiting(visiting: Boolean) {
+        // He is stepping into the app's box, or out of it. Either way the menu is pointing at a
+        // ghost who will not be there.
+        if (visiting) closeQuickActions()
         if (isVisiting == visiting) return
         isVisiting = visiting
         if (pets.isEmpty()) return
@@ -536,6 +552,27 @@ class GhostOverlayService : Service() {
         private var ghostPx = 0
         private var windowPx = 0
         private var haloPx = 0
+
+        /**
+         * A small, invisible, touchable window sitting exactly on his body — the only thing in
+         * solid mode that swallows a tap.
+         *
+         * It exists because the drawn window cannot do this job. That one has to be far bigger than
+         * he is: it carries the speech bubble's headroom above him and the contrast wash below, so
+         * at the default size it measures 297x323 where his body is 101 across (measured on a
+         * Motorola Edge 70 Pro, 450dpi). Making *that* touchable, which is what solid mode used to
+         * do, put a dead rectangle nine times his own area under the user's finger and dragged it
+         * around the screen with him.
+         *
+         * The obvious fix — one window, touchable only over a sub-region — needs
+         * ViewTreeObserver.OnComputeInternalInsetsListener and TOUCHABLE_INSETS_REGION, which are
+         * @hide and @UnsupportedAppUsage in AOSP. That is restricted non-SDK surface and not
+         * something to build a shipping feature on at API 36. Two windows is the public answer: the
+         * drawn one stays intangible forever, and this one, his size plus a small grab margin,
+         * catches what lands on him.
+         */
+        private var touchPatch: View? = null
+        private var patchParams: WindowManager.LayoutParams? = null
 
         /** Space above him inside the window, so a speech bubble is never clipped. */
         private var headroomPx = 0
@@ -641,6 +678,16 @@ class GhostOverlayService : Service() {
         private var pettingArmed = false
         private var petTriggered = false
         private var lastPetAt = 0L
+        private val holdRunnable = Runnable {
+            if (!pettingArmed || dragging) return@Runnable
+            // A hold used to start petting and keep it going for as long as the finger stayed put.
+            // It opens the quick actions instead now, and petting is one of them — a hold is the
+            // only gesture he has spare, and a menu you can reach from inside someone else's app
+            // is worth more than a stroke you can already give him in the box.
+            pettingArmed = false
+            openQuickActions(this)
+        }
+
         private val petRunnable = Runnable {
             if (!pettingArmed || dragging) return@Runnable
             petTriggered = true
@@ -688,7 +735,11 @@ class GhostOverlayService : Service() {
             // click-through change can be minutes after the roster was assembled.
             pet = PetStore.read(ctx, slot)
             ghostPx = (pet.sizeDp * density).toInt()
-            haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
+            // Always zero now. The halo used to fatten the drawn window in solid mode so there was
+            // something to grab beyond his outline; that margin moved to [touchPatch], which is the
+            // only window that can be grabbed at all. Keeping this at zero means the drawn window
+            // has one geometry in both modes — the one the default mode has always used.
+            haloPx = 0
             windowPx = ghostPx + haloPx * 2
             headroomPx = GhostView.headroomPx(density, ghostPx)
             sidePx = GhostView.bubbleSidePx(density, ghostPx)
@@ -714,15 +765,15 @@ class GhostOverlayService : Service() {
             }
             root = container
 
-            var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            // The drawn window never takes a touch, in either mode. What changes between them is
+            // whether [touchPatch] exists alongside it. FLAG_WATCH_OUTSIDE_TOUCH stays on in both,
+            // because it is how he notices a tap going past him and that is not a solid-mode idea.
+            val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-            if (clickThrough) {
-                // Nothing is ever swallowed; he only hears the tap go past him.
-                flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-            }
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 
             params = WindowManager.LayoutParams(
                 windowPx + sidePx * 2,
@@ -738,7 +789,9 @@ class GhostOverlayService : Service() {
                 // underneath entirely. The platform will clamp this for us if we don't (visible as a
                 // "setting alpha to 0.80" warning in logcat), but relying on that silent correction
                 // instead of setting it ourselves isn't guaranteed across OS versions/OEM skins.
-                if (clickThrough) alpha = 0.8f
+                // Unconditional now that the drawn window is never touchable, which also means he
+                // looks identical in both modes rather than a shade more solid in one of them.
+                alpha = 0.8f
             }
 
             // Sent out from the box, he starts exactly where the box was drawing him, so the
@@ -755,7 +808,11 @@ class GhostOverlayService : Service() {
             params.x = posX.toInt() - sidePx
             params.y = posY.toInt()
 
-            container.setOnTouchListener { _, event -> onGhostTouch(event) }
+            // Only outside taps reach the drawn window; anything landing on him is the patch's.
+            container.setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE) noticeOutsideTap(event.eventTime)
+                false
+            }
             // Handed over from the box he arrives at full strength, on the spot and at the point in
             // his bob the box last drew him at — the same picture, so the box can drop away beneath
             // him without anything showing. Only a cold start (the notification, the watchdog) has
@@ -763,13 +820,67 @@ class GhostOverlayService : Service() {
             container.alpha = if (spawn != null) 1f else 0f
             windowManager.addView(container, params)
             if (spawn == null) container.animate().alpha(1f).setDuration(FADE_MS).start()
+            if (!clickThrough) attachTouchPatch()
 
             refreshMood()
+        }
+
+        /** Half his own width again, so he can be grabbed without having to be hit dead centre. */
+        private fun grabPx(): Int = (ghostPx * 0.18f).toInt()
+
+        /** His body's centre on screen. The drawn window starts [headroomPx] above his crown. */
+        fun bodyCentreX(): Float = posX + ghostPx / 2f
+        fun bodyCentreY(): Float = posY + headroomPx + ghostPx / 2f
+        fun bodyHalfPx(): Float = ghostPx / 2f
+
+        private fun patchSpan(): Int = ghostPx + grabPx() * 2
+
+        /**
+         * Puts up the small touchable window and hands it the gestures. Only in solid mode — in
+         * the default one nothing of his is touchable at all, which is the whole point of it.
+         */
+        private fun attachTouchPatch() {
+            if (touchPatch != null) return
+            val patch = View(ctx)
+            // Every gesture he has is on this window now, so the listener is the real one.
+            patch.setOnTouchListener { _, event -> onGhostTouch(event) }
+            val lp = WindowManager.LayoutParams(
+                patchSpan(),
+                patchSpan(),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            }
+            positionPatch(lp)
+            touchPatch = patch
+            patchParams = lp
+            runCatching { windowManager.addView(patch, lp) }
+                .onFailure { touchPatch = null; patchParams = null }
+        }
+
+        private fun detachTouchPatch() {
+            val patch = touchPatch ?: return
+            touchPatch = null
+            patchParams = null
+            runCatching { windowManager.removeView(patch) }
+        }
+
+        /** Centres the patch on his body, which sits [headroomPx] down inside the drawn window. */
+        private fun positionPatch(lp: WindowManager.LayoutParams) {
+            val grab = grabPx()
+            lp.x = posX.toInt() - grab
+            lp.y = posY.toInt() + headroomPx - grab
         }
 
         /** Takes his window down, leaving where he was behind for the next [attach] to pick up. */
         fun detach() {
             cancelGestures()
+            detachTouchPatch()
             val view = root ?: return
             Prefs.savePosition(ctx, posX, posY, slot)
             runCatching { windowManager.removeView(view) }
@@ -783,7 +894,9 @@ class GhostOverlayService : Service() {
 
         /** Drops everything mid-gesture or mid-flight that is tied to the window being replaced. */
         fun cancelGestures() {
+            if (menuOwner === this) closeQuickActions()
             handler.removeCallbacks(petRunnable)
+            handler.removeCallbacks(holdRunnable)
             pendingTapRunnable?.let { handler.removeCallbacks(it) }
             pendingTapRunnable = null
             dragging = false
@@ -793,6 +906,10 @@ class GhostOverlayService : Service() {
         }
 
         fun fadeOut(onEnd: Runnable?) {
+            // Straight away, not on the fade's end action: the patch is invisible, so there is
+            // nothing to fade, and leaving it up for the length of the fade leaves a dead square
+            // over the app he is stepping into.
+            detachTouchPatch()
             val view = root ?: return
             view.animate().alpha(0f).setDuration(FADE_MS).withEndAction {
                 if (isVisiting) view.visibility = View.GONE
@@ -805,10 +922,13 @@ class GhostOverlayService : Service() {
             view.animate().cancel()
             view.visibility = View.VISIBLE
             view.alpha = 1f
+            if (!clickThrough) attachTouchPatch()
         }
 
         /** Put back into the hidden, stopped state a visit left him in, after a window rebuild. */
         fun hideForVisit() {
+            // See [fadeOut]: a hidden ghost must not leave a hole in the screen where he was.
+            detachTouchPatch()
             val view = root ?: return
             view.animate().cancel()
             view.alpha = 0f
@@ -966,6 +1086,17 @@ class GhostOverlayService : Service() {
                 runCatching { windowManager.updateViewLayout(container, params) }
                 lastAppliedX = params.x
                 lastAppliedY = params.y
+                // The grab area is a fraction of his width, so a resize moves it too. Without this
+                // a Wisp promoted to a Haunt would keep a Wisp-sized patch and be nearly unhittable
+                // — and the reverse would leave a Haunt-sized dead zone around a tiny ghost.
+                patchParams?.let { lp ->
+                    lp.width = patchSpan()
+                    lp.height = patchSpan()
+                    positionPatch(lp)
+                    touchPatch?.let { patch ->
+                        runCatching { windowManager.updateViewLayout(patch, lp) }
+                    }
+                }
             }
 
             if (fresh.shade != pet.shade) view.setShade(fresh.shade)
@@ -1095,7 +1226,7 @@ class GhostOverlayService : Service() {
                     )
                     petTriggered = false
                     pettingArmed = true
-                    handler.postDelayed(petRunnable, PET_HOLD_MS)
+                    handler.postDelayed(holdRunnable, PET_HOLD_MS)
                     return true
                 }
 
@@ -1105,7 +1236,11 @@ class GhostOverlayService : Service() {
                     if (!dragging && hypot(dx, dy) > touchSlop) {
                         dragging = true
                         pettingArmed = false
+                        // Carrying him off is an answer to the menu too: it was anchored to where
+                        // he was standing, and he is not standing there any more.
+                        if (menuOwner === this) closeQuickActions()
                         handler.removeCallbacks(petRunnable)
+            handler.removeCallbacks(holdRunnable)
                     }
                     if (dragging) {
                         posX = downPosX + dx
@@ -1127,6 +1262,7 @@ class GhostOverlayService : Service() {
 
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(petRunnable)
+            handler.removeCallbacks(holdRunnable)
                     pettingArmed = false
                     if (!dragging) {
                         if (petTriggered) {
@@ -1173,6 +1309,7 @@ class GhostOverlayService : Service() {
 
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(petRunnable)
+            handler.removeCallbacks(holdRunnable)
                     pettingArmed = false
                     dragging = false
                     return true
@@ -1245,8 +1382,71 @@ class GhostOverlayService : Service() {
             val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
             Prefs.saveStats(ctx, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis(), slot)
             ghost?.startPetting()
-            // Still held: keep ticking affection for as long as the finger stays put.
-            handler.postDelayed(petRunnable, PET_ANIMATION_MS)
+        }
+
+        /**
+         * Does one of the quick actions to him. Everything here is the same call the app's own
+         * Home tab makes — the difference is only that you did not have to go and find it.
+         */
+        fun runQuickAction(id: String) {
+            when (id) {
+                "feed" -> {
+                    PetStats.feed(ctx, slot)
+                    // The app watches this key to play the same drop-and-eat in the box, and so
+                    // does [noteEvent] out here — which is why the animation is not started twice.
+                    Prefs.markFed(ctx, slot)
+                    ghost?.startEating()
+                    ghost?.showExpression(Expression.DELIGHTED, 2f)
+                }
+                "play" -> when (Emotions.playWithToken(ctx, slot)) {
+                    Emotions.PlayOutcome.SUCCESS -> playNow()
+                    // No toast out here — there is no app to put one in front of. He answers
+                    // instead, which is the only vocabulary the overlay has.
+                    Emotions.PlayOutcome.TOO_TIRED -> ghost?.showExpression(Expression.SLEEPY, 2f)
+                    Emotions.PlayOutcome.NO_TOKENS -> ghost?.showExpression(Expression.CONFUSED, 2f)
+                }
+                "pet" -> strokeOnce()
+                "nap" -> toggleNap()
+            }
+            refreshMood()
+        }
+
+        /** True while his quick actions are open — see [tick]. */
+        private var menuHeld = false
+
+        fun holdForMenu(held: Boolean) {
+            menuHeld = held
+        }
+
+        /** A small look-up as the buttons unfurl, so the menu reads as his and not the system's. */
+        fun perkUp() {
+            ghost?.notice()
+        }
+
+        /** One stroke, from the menu rather than from a finger held on him. */
+        fun strokeOnce() {
+            lastPetAt = 0L
+            stroke()
+            handler.removeCallbacks(petRunnable)
+        }
+
+        /** The zoomies a successful play earns him, wherever the play came from. */
+        fun playNow() {
+            noteInteraction(PetEvent.PLAYED)
+            ghost?.startWiggle()
+            ghost?.showExpression(Expression.DELIGHTED, 2.2f)
+            launch(Random.nextFloat() * 2f * PI.toFloat())
+        }
+
+        /** Puts him down for a nap, or stirs him if he is already having one. */
+        fun toggleNap() {
+            if (sleeping) {
+                wakeUp()
+            } else {
+                PetStats.setSleeping(ctx, true, slot)
+                sleeping = true
+                ghost?.setMood(mood, true)
+            }
         }
 
         /** A poke while napping: stir awake with a small startle rather than a full bolt. */
@@ -1387,6 +1587,16 @@ class GhostOverlayService : Service() {
         private fun tick(dt: Float) {
             val view = ghost ?: return
             if (dragging) return
+            // His quick actions are open beside him, anchored to where he is. Letting him drift on
+            // would either drag the menu around under the finger reaching for it or leave it
+            // pointing at empty screen. He waits; he keeps breathing, because the view advances
+            // whatever this does.
+            if (menuHeld) {
+                velX = 0f
+                velY = 0f
+                view.setMotion(0f, 0f)
+                return
+            }
 
             if (clock > nextStatsTickAt) {
                 nextStatsTickAt = clock + 10f
@@ -1845,6 +2055,13 @@ class GhostOverlayService : Service() {
                 bodyY = posY + headroomPx
             }
             runCatching { windowManager.updateViewLayout(view, params) }
+            // The patch rides with him. It is a second relayout on the same frame, which is the
+            // price of the drawn window never being touchable — and it is only paid in solid mode,
+            // by the pets that have one.
+            patchParams?.let { lp ->
+                positionPatch(lp)
+                touchPatch?.let { patch -> runCatching { windowManager.updateViewLayout(patch, lp) } }
+            }
         }
 
         // endregion
@@ -1910,6 +2127,15 @@ class GhostOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        // Torn down rather than dismissed: the animation would be running against a view whose
+        // service is already going, and a window left behind by a dead service is not recoverable.
+        menuView?.let { view ->
+            menuView = null
+            menuParams = null
+            menuOwner = null
+            runCatching { windowManager.removeView(view) }
+        }
+        handler.removeCallbacks(menuTimeout)
         isVisiting = false
         isRunning = false
         stopLoop()
@@ -2064,6 +2290,145 @@ class GhostOverlayService : Service() {
             wm.defaultDisplay.getRealSize(size)
             bounds.set(0, 0, size.x, size.y)
             usable.set(bounds)
+        }
+    }
+
+    // endregion
+
+    // region quick actions
+
+    /**
+     * The row of buttons a long press puts beside him — feed, play, pet, nap — so the things you
+     * do to him no longer require going and finding the app first.
+     *
+     * There is one of these for the whole service, not one per pet. Two menus open at once would be
+     * two windows fighting over the same finger, and the menu names the pet it belongs to anyway.
+     *
+     * It only exists in solid mode, because it is opened by a long press and a long press needs a
+     * touch with coordinates — see the class doc on the two modes. That is [FloatingPet.touchPatch]'s
+     * doing, and the reason it is small enough to be worth having.
+     */
+    private var menuView: QuickActionsView? = null
+    private var menuParams: WindowManager.LayoutParams? = null
+    private var menuOwner: FloatingPet? = null
+
+    /** Set the moment a close begins, so a second outside tap mid-animation is ignored. */
+    private var menuClosing = false
+
+    private val menuTimeout = Runnable { closeQuickActions() }
+
+    private fun openQuickActions(owner: FloatingPet) {
+        if (menuView != null) return
+        val view = QuickActionsView(this)
+        // Sizing reads the actions, so they have to be in before the window is measured.
+        view.setActions(actionsFor(owner))
+        val w = view.desiredWidth()
+        val h = view.desiredHeight()
+        if (w <= 0 || h <= 0) return
+
+        val lp = WindowManager.LayoutParams(
+            w,
+            h,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // Touchable, unlike everything else this service puts up: it has buttons. Not
+            // focusable, so it never takes the keyboard off whatever is underneath.
+            // FLAG_WATCH_OUTSIDE_TOUCH is what lets a tap anywhere else close it.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+        }
+        placeMenu(lp, owner, w, h)
+
+        view.onPick = { action ->
+            owner.runQuickAction(action.id)
+            closeQuickActions()
+        }
+        view.onDismiss = { closeQuickActions() }
+
+        menuView = view
+        menuParams = lp
+        menuOwner = owner
+        menuClosing = false
+        val added = runCatching { windowManager.addView(view, lp) }.isSuccess
+        if (!added) {
+            menuView = null
+            menuParams = null
+            menuOwner = null
+            return
+        }
+        view.reveal()
+        owner.perkUp()
+        owner.holdForMenu(true)
+        // It is sitting on top of somebody else's app. If it is not being used it should go.
+        handler.postDelayed(menuTimeout, MENU_IDLE_MS)
+    }
+
+    /**
+     * Beside him, on whichever side has room, with the buttons level with his middle.
+     *
+     * The buttons occupy the top of the window rather than its centre — the labels hang below them
+     * — so lining the row up with him means offsetting by half a button plus the padding above it,
+     * not by half the window.
+     */
+    private fun placeMenu(lp: WindowManager.LayoutParams, owner: FloatingPet, w: Int, h: Int) {
+        val gap = MENU_GAP_DP * density
+        val leftOf = owner.bodyCentreX() - owner.bodyHalfPx() - gap - w
+        val rightOf = owner.bodyCentreX() + owner.bodyHalfPx() + gap
+        // His own side of the screen first: a menu that opens away from the edge he is clinging to
+        // is the one that fits.
+        lp.x = if (rightOf + w <= usable.right) {
+            rightOf.toInt()
+        } else if (leftOf >= usable.left) {
+            leftOf.toInt()
+        } else {
+            // Nowhere beside him: centre it on him and let the clamp below sort it out.
+            (owner.bodyCentreX() - w / 2f).toInt()
+        }
+        val buttonCentreFromTop = (QuickActionsView.PAD_DP + QuickActionsView.BUTTON_DP / 2f) * density
+        lp.y = (owner.bodyCentreY() - buttonCentreFromTop).toInt()
+        lp.x = lp.x.coerceIn(usable.left, (usable.right - w).coerceAtLeast(usable.left))
+        lp.y = lp.y.coerceIn(usable.top, (usable.bottom - h).coerceAtLeast(usable.top))
+    }
+
+    /** What he can be offered right now. A greyed button says more than a missing one. */
+    private fun actionsFor(p: FloatingPet): List<QuickAction> {
+        val s = Emotions.snapshot(this, p.slot)
+        val asleep = s.body.sleeping
+        return listOf(
+            QuickAction("feed", IconGlyph.HUNGER, getString(R.string.quick_feed)),
+            QuickAction(
+                "play",
+                IconGlyph.PLAY,
+                getString(R.string.quick_play),
+                enabled = !asleep && s.tokens >= Emotions.PLAY_COST,
+            ),
+            QuickAction("pet", IconGlyph.HAPPINESS, getString(R.string.quick_pet), enabled = !asleep),
+            QuickAction(
+                "nap",
+                IconGlyph.NAP,
+                getString(if (asleep) R.string.quick_wake else R.string.quick_nap),
+            ),
+        )
+    }
+
+    fun closeQuickActions() {
+        val view = menuView ?: return
+        if (menuClosing) return
+        menuClosing = true
+        handler.removeCallbacks(menuTimeout)
+        menuOwner?.holdForMenu(false)
+        view.dismiss {
+            runCatching { windowManager.removeView(view) }
+            if (menuView === view) {
+                menuView = null
+                menuParams = null
+                menuOwner = null
+            }
+            menuClosing = false
         }
     }
 
