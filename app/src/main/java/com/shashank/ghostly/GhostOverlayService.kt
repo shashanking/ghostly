@@ -849,11 +849,6 @@ class GhostOverlayService : Service() {
     private fun perform(behaviour: Behaviour, view: GhostView) {
         if (sleeping || petTriggered) return
 
-        android.util.Log.i(
-            "GhostBehaviour",
-            "${behaviour.id} -> ${behaviour.emote}/${behaviour.locomotion} " +
-                "vocal=${behaviour.vocal} intensity=${behaviour.intensity}"
-        )
         behaviour.vocal?.let { view.showBubble(it, 1.9f) }
 
         when (behaviour.emote) {
