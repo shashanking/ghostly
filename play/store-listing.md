@@ -85,6 +85,23 @@ short side. Raw 1080×2400 phone captures are 2.22:1 and get rejected — the on
 
 ## Release notes (What's new, max 500)
 
+### 1.2.0 (versionCode 5) — current
+
+```
+Twelve kinds to choose from, every one properly drawn — ears, antlers, horns,
+wings and gills, not just a recoloured ghost. Each newcomer borrows the
+reactions of whoever he takes after, so he arrives with lots to say.
+
+Sending him out and calling him home is one unbroken movement now. He used
+to blink as the box handed him over. He doesn't any more, and the flight
+home runs at full frame rate.
+
+Also: treats and gifts land anywhere in the box, and Settings can make him
+tappable while he floats.
+```
+
+### 1.1.0 (versionCode 3/4) — the first pet release
+
 ```
 Ghostly is a pet now, not just a floating ghost.
 
