@@ -11,14 +11,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -51,6 +49,15 @@ import kotlin.random.Random
  *   reacts to any tap, with habituation so that typing does not send him into a panic.
  * - **Solid**: the window is touchable, with a small halo of personal space around him. Now he can
  *   be poked precisely, dragged and long-pressed — at the cost of swallowing taps where he floats.
+ *
+ * ### One pet, in a shape that holds more
+ *
+ * Everything that belongs to *a* floating pet — his window, his position, his velocity, his mood,
+ * his brain — lives on [FloatingPet], and the service holds a list of them. Exactly one is created:
+ * the primary, on the same flat preference keys he has always used. What stays out here is what is
+ * genuinely shared and must stay single no matter how many of him there are: the display bounds,
+ * the clock, the foreground notification, the screen on/off receiver, the preference listener, and
+ * above all the frame loop — see [frameCallback].
  */
 class GhostOverlayService : Service() {
 
@@ -82,14 +89,21 @@ class GhostOverlayService : Service() {
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
 
-        /** Writes that can change how he is feeling, or how he looks. Nothing else needs a redraw. */
+        /**
+         * Writes that can change how he is feeling, or how he looks. Nothing else needs a redraw.
+         *
+         * These are *base* names. A stored key carries the slot it belongs to on the end for every
+         * pet but the first (`hunger#3`), so they are matched through [Prefs.baseOf] rather than
+         * against the stored key itself — see the listener in [attachOverlay].
+         */
         private val MOOD_KEYS = setOf("hunger", "energy", "happiness", "anger", "sleeping", "fed_at")
         private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name")
 
         /**
          * Whether he can be tapped outside the app. Unlike [MOOD_KEYS]/[LOOK_KEYS] this is not a
          * redraw: it decides `FLAG_NOT_TOUCHABLE`, which is only read when the window is created
-         * and cannot be flipped on a live one — see [recreateWindow].
+         * and cannot be flipped on a live one — see [recreateWindow]. It is also the account's
+         * setting rather than a pet's, so it has no slot and is matched exactly.
          */
         private const val CLICK_THROUGH_KEY = "click_through"
 
@@ -244,13 +258,16 @@ class GhostOverlayService : Service() {
         }
     }
 
+    // region shared state
+
     private lateinit var windowManager: WindowManager
-    private lateinit var params: WindowManager.LayoutParams
-    private var root: FrameLayout? = null
-    private var ghost: GhostView? = null
 
     private var density = 1f
     private var clickThrough = true
+    private var touchSlop = 0
+
+    /** Smallest movement worth a window relayout — a dp, not a pixel. See [FloatingPet.applyPosition]. */
+    private var moveThresholdPx = 1
 
     /** The whole display. */
     private val bounds = Rect()
@@ -261,144 +278,59 @@ class GhostOverlayService : Service() {
      */
     private val usable = Rect()
 
-    /** Size of the ghost, and of the window that carries him (ghost + halo on every side). */
-    private var ghostPx = 0
-    private var windowPx = 0
-    private var haloPx = 0
-
-    /** Space above him inside the window, so a speech bubble is never clipped. */
-    private var headroomPx = 0
-
     /**
-     * Blank room on each side of his body, inside the window. The speech bubble is a fixed size at
-     * every ghost size, so on a small ghost it is wider than he is and needs somewhere to go.
-     * [posX] still means the left edge of his body's own window — only the window we hand the
-     * window manager is wider, and it is pushed left by this much to keep him where he was.
+     * Every pet currently out there.
+     *
+     * Exactly one for now — the primary — and that is the point of the list rather than a reason
+     * against it: everything per pet already lives on [FloatingPet], so growing the roster is a
+     * change to what goes in here and to nothing else.
      */
-    private var sidePx = 0
+    private val pets = mutableListOf<FloatingPet>()
 
-    /** Blank room below his body inside the window, so the contrast wash is not cut off. */
-    private var haloPadPx = 0
+    /** The one the app's box hands back and forth, and the one the notification speaks for. */
+    private fun primary(): FloatingPet? = pets.firstOrNull { it.pet.isPrimary }
 
-    /**
-     * A movement set piece that has taken him over for a few seconds — a roll, a bounce, a loop.
-     * Null the rest of the time, when he is simply drifting.
-     */
-    private var routine: Locomotion? = null
-    private var routineUntil = 0f
-    private var routineAnchorX = 0f
-    private var routineAnchorY = 0f
-    private var routineAngle = 0f
-    private var routineDir = 1f
-    private var routineSpeed = 0f
-
-    /** When he first ended up against a wall, so being stuck on one can be noticed and undone. */
-    private var pinnedSince = 0f
-
-    /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
-    private var homing = false
-    private var homingToX = 0f
-    private var homingToY = 0f
-
-    /** A flight that never lands — the app died mid-hand-off — must not strand him hovering. */
-    private var homingUntil = 0f
-
-    // What the window was last resized/retinted to, so the prefs listener only touches the
-    // window when the size or colour actually changed rather than on every stat tick.
-    private var lastSizeDp = -1
-    private var lastTintHue: Float? = -999f
-
-    // Position of the window's top-left corner, kept as floats so motion stays smooth.
-    private var posX = 0f
-    private var posY = 0f
-    private var velX = 0f
-    private var velY = 0f
-
-    // He never stops: this is the heading he keeps drifting along between scares.
-    private var driftAngle = Random.nextFloat() * 2f * PI.toFloat()
-    private var driftSpeed = 0f
-
-    private var lastFrameNanos = 0L
+    /** The shared timeline every pet's timers are measured against. */
     private var clock = 0f
+    private var lastFrameNanos = 0L
+    private var lastFrameAt = 0L
+    private var looping = false
+    private val handler = Handler(Looper.getMainLooper())
 
-    // Reacting to taps he cannot locate: recent tap times, so he can get used to a burst of them.
-    private val recentTaps = ArrayDeque<Long>()
-    private var lastReactionAt = 0L
-
-    // Where he is looking, in screen pixels, and when to pick somewhere new.
-    private var gazeScreenX = 0f
-    private var gazeScreenY = 0f
-    private var nextGlanceAt = 0f
-
-    // Mood, read from Emotions. Refreshed on a slow timer plus whenever a stat changes (feeding,
-    // playing, a manual nap, a treat or gift) so the two screens never drift far apart.
-    private var sleeping = false
-    private var mood: Mood = Mood.CONTENT
-    private var energyFull = false
-    private var nextStatsTickAt = 0f
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private var receiverRegistered = false
 
-    // A hungry buzz + meow/woof, or a happy little vocalisation, every so often.
-    private var nextFlourishAt = 20f
+    /**
+     * The content pack, parsed once for everyone.
+     *
+     * It is a quarter of a megabyte of JSON and identical for every pet, so it is read here and
+     * handed to each pet's own [BehaviourEngine]. The engines themselves must stay per pet: what
+     * an engine remembers is what it has just had *this* pet say, and sharing that would have five
+     * ghosts taking it in turns to speak out of one mouth.
+     */
+    private var behaviourPack: BehaviourPack? = null
+    private var packVersion = Int.MIN_VALUE
 
-    // Puffed up, floating and holding in a corner for a few seconds — a random idle quirk.
-    private var goofyUntil = 0f
-    private var nextGoofyCheckAt = 45f
-    private var goofyCornerX = 0f
-    private var goofyCornerY = 0f
-
-    // So the notification is only rebuilt when what it would say actually changes.
-    private var notifiedSleeping = false
-    private var lastExpression: Expression = Expression.NONE
-    private var lastShade: Shade = Shade.DEFAULT
-    private var notifiedMood: Mood = Mood.CONTENT
-
-    // Drag bookkeeping
-    private var dragging = false
-    private var downRawX = 0f
-    private var downRawY = 0f
-    private var downPosX = 0f
-    private var downPosY = 0f
-    private var downTime = 0L
-    private var lastDragX = 0f
-    private var lastDragY = 0f
-    private var lastDragNanos = 0L
-    private var touchSlop = 0
-
-    // Petting: a hold that starts and stays on him, as opposed to a quick poke or a drag past
-    // him — only reachable in solid (non-click-through) mode, where a touch's exact position is
-    // actually known. Mirrors GhostPlayground's hold/animation cadence.
-    private var pettingArmed = false
-    private var petTriggered = false
-    private var lastPetAt = 0L
-    private val petRunnable = Runnable {
-        if (!pettingArmed || dragging) return@Runnable
-        petTriggered = true
-        pet()
-    }
-
-    // Double tap: a second quick tap close to the first, within the platform's usual double-tap
-    // window, opens the app instead of fleeing. A lone tap still flees, just after that same
-    // brief window closes with no second tap to pair it with.
-    private var pendingTapRunnable: Runnable? = null
-    private var lastTapUpAt = 0L
-    private var lastTapX = 0f
-    private var lastTapY = 0f
-
-    /** The pet's brain. Content-driven; with no pack loaded it simply never proposes anything. */
-    private var behaviourEngine: BehaviourEngine? = null
-    private var enginePackVersion = -1
-
-    /** Rebuilt whenever a newer pack has been downloaded since it was last built. */
-    private fun engine(): BehaviourEngine {
+    private fun pack(): BehaviourPack? {
         val version = BehaviourPack.loadedVersion(this)
-        val current = behaviourEngine
-        if (current != null && version == enginePackVersion) return current
-        return BehaviourEngine.fromAssets(this).also {
-            behaviourEngine = it
-            enginePackVersion = version
+        if (version != packVersion) {
+            behaviourPack = BehaviourPack.load(this)
+            packVersion = version
         }
+        return behaviourPack
     }
+
+    /**
+     * The last outside touch already dealt with, by the time the platform stamped it.
+     *
+     * `ACTION_OUTSIDE` is delivered to every watching overlay window, so one tap on screen arrives
+     * once per pet. [FloatingPet.noticeTap] counts taps in a four-second window to work out whether
+     * you are typing at it, so letting all the copies through would read one deliberate poke as a
+     * five-tap burst and drop every pet straight into its keyboard cooldown — he would stop
+     * reacting to being tapped at all. The event time is identical across the copies, because they
+     * are one input event fanned out, and that is what tells a copy from a second tap.
+     */
+    private var lastOutsideTapAt = Long.MIN_VALUE
 
     private val syncRunnable = object : Runnable {
         override fun run() {
@@ -407,23 +339,27 @@ class GhostOverlayService : Service() {
             handler.postDelayed(this, SYNC_INTERVAL_MS)
         }
     }
-    private var lastInteractionAt = 0L
-    private var lastPetEvent: PetEvent? = null
 
     private val behaviourRunnable = object : Runnable {
         override fun run() {
             if (!isRunning) return
             // A behaviour chosen while the screen is off, or while he is hidden in the app's box,
             // is decided, animated and thrown away unseen.
-            if (looping) proposeBehaviour()
+            if (looping) {
+                for (p in pets) p.proposeBehaviour()
+            }
             handler.postDelayed(this, BEHAVIOUR_INTERVAL_MS)
         }
     }
 
-    private var looping = false
-    private var lastFrameAt = 0L
-    private val handler = Handler(Looper.getMainLooper())
-
+    /**
+     * One callback for all of them, however many there are, and it has to stay that way: a bare
+     * chain — each frame scheduling the next — freezes for good if the platform drops the pending
+     * callback at display-off (reported on a Galaxy S24), and one chain to keep alive is already
+     * enough. [startLoop]/[stopLoop], the screen on/off receiver and [watchdog] exist to guard this
+     * single loop; a callback per pet would need all three again, per pet, and any one of them
+     * dropped would leave that pet frozen over your apps forever.
+     */
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!isRunning || !looping) return
@@ -436,16 +372,25 @@ class GhostOverlayService : Service() {
             // fifteen frames while moving over a thousand pixels a second — a hundred-pixel jump
             // per frame, which is exactly as choppy as it sounds. Anything moving faster than a
             // gentle drift gets the full rate; only genuinely slow motion is allowed to save.
-            val movingFast = hypot(velX, velY) > driftSpeed * 2f
-            val minFrame = when {
-                // Every frame the display has, for the two moments the eye is actually following
-                // him: the flight home, and a finger dragging him about. Both are short, both are
-                // deliberate, and the cap was costing them badly — homing runs at up to thirty-odd
-                // times drift speed, which at thirty frames is a sixty-pixel jump between frames.
-                homing || dragging -> 0f
-                movingFast || routine != null -> MIN_FRAME_SECONDS
-                sleeping -> SLEEP_FRAME_SECONDS
-                else -> IDLE_FRAME_SECONDS
+            //
+            // With a roster that stops being one decision. The loop has to wake as often as the
+            // neediest pet needs it — a finger dragging one of them cannot be made to stutter
+            // because the others are asleep — but the saving is per pet and must stay per pet, or
+            // one dragged ghost would drag all five up to full rate and with them every window
+            // relayout the cap was measured to avoid. So: the loop runs at the fastest budget
+            // anyone is asking for, and each pet takes only the frames his own budget allows,
+            // inside [FloatingPet.step].
+            // Indexed loops and a running minimum, not `minOfOrNull` and `for (p in pets)`. Both
+            // of those allocate on a path that runs thirty times a second — the selector overload
+            // returns a boxed `Float?`, and each `for..in` over a list takes an iterator. This
+            // file already hoists a two-element IntArray for exactly that reason, and with one pet
+            // the allocations were pure loss against the code this replaced.
+            // Each pet's budget is computed once here and remembered, so [FloatingPet.step] can
+            // re-apply it without deciding twice; it costs a hypot per pet per frame.
+            var minFrame = IDLE_FRAME_SECONDS
+            for (i in pets.indices) {
+                val budget = pets[i].takeFrameBudget()
+                if (budget < minFrame) minFrame = budget
             }
             if (lastFrameNanos != 0L && elapsed < minFrame) {
                 Choreographer.getInstance().postFrameCallback(this)
@@ -455,13 +400,7 @@ class GhostOverlayService : Service() {
             lastFrameNanos = frameTimeNanos
             lastFrameAt = SystemClock.elapsedRealtime()
             clock += dt
-            tick(dt)
-            watchForPinning()
-            ghost?.let { view ->
-                view.advance(dt)
-                view.invalidate()
-                idleClock = view.idleClock()
-            }
+            for (i in pets.indices) pets[i].step(frameTimeNanos)
             Choreographer.getInstance().postFrameCallback(this)
         }
     }
@@ -502,31 +441,13 @@ class GhostOverlayService : Service() {
         looping = true
         lastFrameNanos = 0L
         lastFrameAt = SystemClock.elapsedRealtime()
+        // Every pet's own frame clock restarts with the loop's, exactly as lastFrameNanos does:
+        // the first step after the screen comes back on is a fresh 16ms, not however long the
+        // phone spent in the dark clamped down to the 50ms ceiling.
+        for (p in pets) p.resetFrameClock()
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         Choreographer.getInstance().postFrameCallback(frameCallback)
-        ghost?.invalidate()
-    }
-
-    /** Body top-left in screen pixels, as carried on an intent — null when it wasn't. */
-    /** Picks up the box's idle bob, if this intent brought one. */
-    private fun Intent.adoptIdleClock() {
-        if (!hasExtra(EXTRA_IDLE_CLOCK)) return
-        ghost?.syncIdleClock(getFloatExtra(EXTRA_IDLE_CLOCK, 0f))
-    }
-
-    private fun Intent.bodyPoint(): Pair<Float, Float>? {
-        if (!hasExtra(EXTRA_BODY_X) || !hasExtra(EXTRA_BODY_Y)) return null
-        return getFloatExtra(EXTRA_BODY_X, 0f) to getFloatExtra(EXTRA_BODY_Y, 0f)
-    }
-
-    /** Puts his body's top-left at a screen point, clamped to where he is allowed to be. */
-    private fun placeBodyAt(x: Float, y: Float) {
-        posX = x
-        posY = y - headroomPx
-        velX = 0f
-        velY = 0f
-        clampIntoBounds()
-        applyPosition()
+        for (p in pets) p.invalidate()
     }
 
     private fun stopLoop() {
@@ -537,6 +458,28 @@ class GhostOverlayService : Service() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
     }
 
+    /** Picks up the box's idle bob, if this intent brought one. */
+    private fun Intent.adoptIdleClock() {
+        if (!hasExtra(EXTRA_IDLE_CLOCK)) return
+        primary()?.adoptIdleClock(getFloatExtra(EXTRA_IDLE_CLOCK, 0f))
+    }
+
+    /** Body top-left in screen pixels, as carried on an intent — null when it wasn't. */
+    private fun Intent.bodyPoint(): Pair<Float, Float>? {
+        if (!hasExtra(EXTRA_BODY_X) || !hasExtra(EXTRA_BODY_Y)) return null
+        return getFloatExtra(EXTRA_BODY_X, 0f) to getFloatExtra(EXTRA_BODY_Y, 0f)
+    }
+
+    /**
+     * A tap landed somewhere on screen, told to us once per overlay window — see [lastOutsideTapAt].
+     * The first copy through fans it out to everyone; the rest are dropped.
+     */
+    private fun noticeOutsideTap(eventTime: Long) {
+        if (eventTime == lastOutsideTapAt) return
+        lastOutsideTapAt = eventTime
+        for (p in pets) p.noticeTap()
+    }
+
     /**
      * Steps him off the screen and into the app's box, or brings him back out. The window stays
      * added and the service stays in the foreground — only the drawing stops, so coming back is
@@ -545,21 +488,1371 @@ class GhostOverlayService : Service() {
     private fun setVisiting(visiting: Boolean) {
         if (isVisiting == visiting) return
         isVisiting = visiting
-        val view = root ?: return
+        if (pets.isEmpty()) return
         if (visiting) {
-            view.animate().alpha(0f).setDuration(FADE_MS).withEndAction {
-                if (isVisiting) view.visibility = android.view.View.GONE
-                stopLoop()
-            }.start()
+            // The loop is stopped under the last pet's fade rather than the first's: stopping it
+            // sooner would leave the others frozen halfway through dissolving.
+            val last = pets.last()
+            for (p in pets) p.fadeOut(if (p === last) Runnable { stopLoop() } else null)
         } else {
             // Same again coming back out of a visit: the box is still drawing him where he is
             // about to appear, so he takes over at full strength rather than dissolving in.
-            view.animate().cancel()
-            view.visibility = android.view.View.VISIBLE
-            view.alpha = 1f
+            for (p in pets) p.fadeIn()
             startLoop()
         }
     }
+
+    // endregion
+
+    // region one pet
+
+    /**
+     * One floating pet: his window, where he is, where he is going, how he feels, and his brain.
+     *
+     * Everything in here is his alone. Nothing on it may be hoisted back onto the service for
+     * convenience — that is exactly how a second pet ends up wearing the first one's velocity —
+     * and nothing genuinely shared may be duplicated into it, which is why the display bounds,
+     * the clock, the handler and the frame loop are reached through the outer class instead.
+     */
+    private inner class FloatingPet(initial: Pet) {
+        /**
+         * Who he is and what he looks like, kept honest by [syncAppearance]. His stats are
+         * deliberately not in here — see [Pet].
+         */
+        var pet: Pet = initial
+            private set
+
+        /** His identity, and the suffix on every preference key that is about him. */
+        val slot: Int get() = pet.slot
+
+        /** The service, as a [Context]. `this` inside here is the pet, not the service. */
+        private val ctx: Context get() = this@GhostOverlayService
+
+        private lateinit var params: WindowManager.LayoutParams
+        private var root: FrameLayout? = null
+        private var ghost: GhostView? = null
+
+        /** Size of the ghost, and of the window that carries him (ghost + halo on every side). */
+        private var ghostPx = 0
+        private var windowPx = 0
+        private var haloPx = 0
+
+        /** Space above him inside the window, so a speech bubble is never clipped. */
+        private var headroomPx = 0
+
+        /**
+         * Blank room on each side of his body, inside the window. The speech bubble is a fixed size
+         * at every ghost size, so on a small ghost it is wider than he is and needs somewhere to
+         * go. [posX] still means the left edge of his body's own window — only the window we hand
+         * the window manager is wider, and it is pushed left by this much to keep him where he was.
+         */
+        private var sidePx = 0
+
+        /** Blank room below his body inside the window, so the contrast wash is not cut off. */
+        private var haloPadPx = 0
+
+        // Position of the window's top-left corner, kept as floats so motion stays smooth.
+        private var posX = 0f
+        private var posY = 0f
+        private var velX = 0f
+        private var velY = 0f
+
+        // He never stops: this is the heading he keeps drifting along between scares.
+        private var driftAngle = Random.nextFloat() * 2f * PI.toFloat()
+        private var driftSpeed = 0f
+
+        /**
+         * A movement set piece that has taken him over for a few seconds — a roll, a bounce, a
+         * loop. Null the rest of the time, when he is simply drifting.
+         */
+        private var routine: Locomotion? = null
+        private var routineUntil = 0f
+        private var routineAnchorX = 0f
+        private var routineAnchorY = 0f
+        private var routineAngle = 0f
+        private var routineDir = 1f
+        private var routineSpeed = 0f
+
+        /** When he first ended up against a wall, so being stuck on one can be noticed and undone. */
+        private var pinnedSince = 0f
+
+        /** He is flying to a point the app named, rather than drifting — see [comeHome]. */
+        private var homing = false
+        private var homingToX = 0f
+        private var homingToY = 0f
+
+        /** A flight that never lands — the app died mid-hand-off — must not strand him hovering. */
+        private var homingUntil = 0f
+
+        // Hue is not part of [Pet] — it is always null now, and only kept so an older build's
+        // stored value can be cleared — so unlike size, shade and species it needs its own memory
+        // of what the view was last set to.
+        private var lastTintHue: Float? = -999f
+
+        /** The frame he was last stepped on, which is not every frame the loop runs — see [step]. */
+        private var lastStepNanos = 0L
+
+        // Reacting to taps he cannot locate: recent tap times, so he can get used to a burst.
+        private val recentTaps = ArrayDeque<Long>()
+        private var lastReactionAt = 0L
+
+        // Where he is looking, in screen pixels, and when to pick somewhere new.
+        private var gazeScreenX = 0f
+        private var gazeScreenY = 0f
+        private var nextGlanceAt = 0f
+
+        // Mood, read from Emotions. Refreshed on a slow timer plus whenever a stat changes (feeding,
+        // playing, a manual nap, a treat or gift) so the two screens never drift far apart.
+        var sleeping = false
+            private set
+        var mood: Mood = Mood.CONTENT
+            private set
+        private var energyFull = false
+        private var nextStatsTickAt = 0f
+
+        // A hungry buzz + meow/woof, or a happy little vocalisation, every so often.
+        private var nextFlourishAt = 20f
+
+        // Puffed up, floating and holding in a corner for a few seconds — a random idle quirk.
+        private var goofyUntil = 0f
+        private var nextGoofyCheckAt = 45f
+        private var goofyCornerX = 0f
+        private var goofyCornerY = 0f
+
+        // So the notification is only rebuilt when what it would say actually changes.
+        private var notifiedSleeping = false
+        private var lastExpression: Expression = Expression.NONE
+        private var notifiedMood: Mood = Mood.CONTENT
+
+        // Drag bookkeeping
+        private var dragging = false
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var downPosX = 0f
+        private var downPosY = 0f
+        private var downTime = 0L
+        private var lastDragX = 0f
+        private var lastDragY = 0f
+        private var lastDragNanos = 0L
+
+        // Petting: a hold that starts and stays on him, as opposed to a quick poke or a drag past
+        // him — only reachable in solid (non-click-through) mode, where a touch's exact position is
+        // actually known. Mirrors GhostPlayground's hold/animation cadence.
+        private var pettingArmed = false
+        private var petTriggered = false
+        private var lastPetAt = 0L
+        private val petRunnable = Runnable {
+            if (!pettingArmed || dragging) return@Runnable
+            petTriggered = true
+            stroke()
+        }
+
+        // Double tap: a second quick tap close to the first, within the platform's usual double-tap
+        // window, opens the app instead of fleeing. A lone tap still flees, just after that same
+        // brief window closes with no second tap to pair it with.
+        private var pendingTapRunnable: Runnable? = null
+        private var lastTapUpAt = 0L
+        private var lastTapX = 0f
+        private var lastTapY = 0f
+
+        /** What the brain wants to know: what this pet last had done to him, and when. */
+        private var lastInteractionAt = 0L
+        private var lastPetEvent: PetEvent? = null
+
+        /** His own brain. Content-driven; with no pack loaded it simply never proposes anything. */
+        private var behaviourEngine: BehaviourEngine? = null
+        private var enginePackVersion = Int.MIN_VALUE
+
+        /** Rebuilt whenever a newer pack has been downloaded since it was last built. */
+        private fun engine(): BehaviourEngine {
+            val shared = pack()
+            val current = behaviourEngine
+            if (current != null && packVersion == enginePackVersion) return current
+            return BehaviourEngine(shared).also {
+                behaviourEngine = it
+                enginePackVersion = packVersion
+            }
+        }
+
+        private var lastAppliedX = Int.MIN_VALUE
+        private var lastAppliedY = Int.MIN_VALUE
+
+        // region his window
+
+        /**
+         * Builds his window and puts it up. [spawn] is his body's top-left, handed over from the
+         * app's box; without one he goes back to wherever he was last saved.
+         */
+        fun attach(spawn: Pair<Float, Float>?) {
+            // Re-read rather than trust the object we were constructed with: a rebuild after a
+            // click-through change can be minutes after the roster was assembled.
+            pet = PetStore.read(ctx, slot)
+            ghostPx = (pet.sizeDp * density).toInt()
+            haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
+            windowPx = ghostPx + haloPx * 2
+            headroomPx = GhostView.headroomPx(density, ghostPx)
+            sidePx = GhostView.bubbleSidePx(density, ghostPx)
+            haloPadPx = GhostView.haloPadPx(ghostPx)
+            driftSpeed = 18f * density
+
+            val view = GhostView(ctx)
+            view.setBodySize(ghostPx)
+            view.setShade(pet.shade)
+            view.species = pet.species
+            lastTintHue = Prefs.colorHue(ctx)
+            view.setTint(lastTintHue)
+            ghost = view
+            val container = FrameLayout(ctx).apply {
+                addView(
+                    view,
+                    FrameLayout.LayoutParams(
+                        ghostPx + sidePx * 2,
+                        ghostPx + headroomPx + haloPadPx,
+                        android.view.Gravity.CENTER
+                    )
+                )
+            }
+            root = container
+
+            var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            if (clickThrough) {
+                // Nothing is ever swallowed; he only hears the tap go past him.
+                flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+            }
+
+            params = WindowManager.LayoutParams(
+                windowPx + sidePx * 2,
+                windowPx + headroomPx + haloPadPx,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                flags,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                // Android's touch-filtering treats a FLAG_NOT_TOUCHABLE overlay left at the default
+                // alpha (1.0) as fully opaque for tapjacking purposes, regardless of how transparent
+                // its actual drawing is — since Android 12 that blocks the tap from reaching the app
+                // underneath entirely. The platform will clamp this for us if we don't (visible as a
+                // "setting alpha to 0.80" warning in logcat), but relying on that silent correction
+                // instead of setting it ourselves isn't guaranteed across OS versions/OEM skins.
+                if (clickThrough) alpha = 0.8f
+            }
+
+            // Sent out from the box, he starts exactly where the box was drawing him, so the
+            // hand-off between the two is invisible: same ghost, same spot, and only then does he
+            // drift off.
+            if (spawn != null) {
+                posX = spawn.first
+                posY = spawn.second - headroomPx
+            } else {
+                posX = Prefs.lastX(ctx, bounds.width() * 0.72f, slot)
+                posY = Prefs.lastY(ctx, bounds.height() * 0.35f, slot)
+            }
+            clampIntoBounds()
+            params.x = posX.toInt() - sidePx
+            params.y = posY.toInt()
+
+            container.setOnTouchListener { _, event -> onGhostTouch(event) }
+            // Handed over from the box he arrives at full strength, on the spot and at the point in
+            // his bob the box last drew him at — the same picture, so the box can drop away beneath
+            // him without anything showing. Only a cold start (the notification, the watchdog) has
+            // nothing to take over from, and fades in.
+            container.alpha = if (spawn != null) 1f else 0f
+            windowManager.addView(container, params)
+            if (spawn == null) container.animate().alpha(1f).setDuration(FADE_MS).start()
+
+            refreshMood()
+        }
+
+        /** Takes his window down, leaving where he was behind for the next [attach] to pick up. */
+        fun detach() {
+            cancelGestures()
+            val view = root ?: return
+            Prefs.savePosition(ctx, posX, posY, slot)
+            runCatching { windowManager.removeView(view) }
+            root = null
+            ghost = null
+            // Stale relayout dedupe from the window we just tore down; force the first position
+            // after a rebuild through rather than have it skipped as "no real movement".
+            lastAppliedX = Int.MIN_VALUE
+            lastAppliedY = Int.MIN_VALUE
+        }
+
+        /** Drops everything mid-gesture or mid-flight that is tied to the window being replaced. */
+        fun cancelGestures() {
+            handler.removeCallbacks(petRunnable)
+            pendingTapRunnable?.let { handler.removeCallbacks(it) }
+            pendingTapRunnable = null
+            dragging = false
+            pettingArmed = false
+            homing = false
+            routine = null
+        }
+
+        fun fadeOut(onEnd: Runnable?) {
+            val view = root ?: return
+            view.animate().alpha(0f).setDuration(FADE_MS).withEndAction {
+                if (isVisiting) view.visibility = View.GONE
+                onEnd?.run()
+            }.start()
+        }
+
+        fun fadeIn() {
+            val view = root ?: return
+            view.animate().cancel()
+            view.visibility = View.VISIBLE
+            view.alpha = 1f
+        }
+
+        /** Put back into the hidden, stopped state a visit left him in, after a window rebuild. */
+        fun hideForVisit() {
+            val view = root ?: return
+            view.animate().cancel()
+            view.alpha = 0f
+            view.visibility = View.GONE
+        }
+
+        fun invalidate() {
+            ghost?.invalidate()
+        }
+
+        fun adoptIdleClock(value: Float) {
+            ghost?.syncIdleClock(value)
+        }
+
+        // endregion
+
+        // region the frame
+
+        /**
+         * The shortest gap he is prepared to be redrawn at, in seconds. Zero means every frame the
+         * display has. The loop asks all of them and runs at the smallest answer — see the long
+         * note on [frameCallback] for why the saving then has to be taken again, per pet, in [step].
+         */
+        fun frameBudget(): Float = when {
+            // Every frame the display has, for the two moments the eye is actually following him:
+            // the flight home, and a finger dragging him about. Both are short, both are
+            // deliberate, and the cap was costing them badly — homing runs at up to thirty-odd
+            // times drift speed, which at thirty frames is a sixty-pixel jump between frames.
+            homing || dragging -> 0f
+            hypot(velX, velY) > driftSpeed * 2f || routine != null -> MIN_FRAME_SECONDS
+            sleeping -> SLEEP_FRAME_SECONDS
+            else -> IDLE_FRAME_SECONDS
+        }
+
+        /**
+         * One frame of him — if this is a frame he is owed.
+         *
+         * Skipping here skips the whole step: physics, view and window alike. That is deliberate.
+         * The 30fps cap was measured on what a frame *costs* — a window relayout, a recomposite
+         * and a view advance — not on the cost of being called, so stepping him anyway and only
+         * throttling the relayout would give the cap away while looking like it was still there.
+         */
+        /** This frame's budget, decided once by the loop — see the note in [frameCallback]. */
+        private var budget = IDLE_FRAME_SECONDS
+
+        fun takeFrameBudget(): Float {
+            budget = frameBudget()
+            return budget
+        }
+
+        fun step(frameTimeNanos: Long) {
+            val elapsed = (frameTimeNanos - lastStepNanos) / 1e9f
+            if (lastStepNanos != 0L && elapsed < budget) return
+            val dt = if (lastStepNanos == 0L) 0.016f else elapsed.coerceIn(0.001f, 0.05f)
+            lastStepNanos = frameTimeNanos
+            tick(dt)
+            watchForPinning()
+            ghost?.let { view ->
+                view.advance(dt)
+                view.invalidate()
+                // The box picks his bob up from here when he is handed back, and there is one box.
+                if (pet.isPrimary) idleClock = view.idleClock()
+            }
+        }
+
+        fun resetFrameClock() {
+            lastStepNanos = 0L
+        }
+
+        // endregion
+
+        // region mood and looks
+
+        /**
+         * Catches his stats and his mood up to now, pushes the result onto the view, and keeps the
+         * notification honest about how he's doing.
+         */
+        fun refreshMood() {
+            val s = Emotions.snapshot(ctx, slot)
+            sleeping = s.body.sleeping
+            mood = s.mood
+            energyFull = s.body.energy >= ENERGY_FULL_THRESHOLD
+            ghost?.setMood(mood, sleeping)
+            // A face that follows from the numbers — only re-shown when it changes, so it does not
+            // restart itself every refresh.
+            val face = expressionFor(s.body)
+            if (face != lastExpression) {
+                lastExpression = face
+                if (face != Expression.NONE) ghost?.showExpression(face, 3.4f)
+            }
+
+            if (sleeping != notifiedSleeping || mood != notifiedMood) {
+                notifiedSleeping = sleeping
+                notifiedMood = mood
+                // The notification and the widget both speak for the primary; the others changing
+                // how they feel is not news either of them can carry.
+                if (pet.isPrimary) {
+                    refreshNotification()
+                    runCatching { GhostlyWidgetProvider.refreshAll(ctx) }
+                }
+            }
+        }
+
+        /**
+         * Resizes, recolours and reshapes the live window in place when the Style tab changes,
+         * keeping him centred at the same spot rather than snapping to a corner or flickering off
+         * and back on.
+         *
+         * Species used to be missing from here even though it is in [LOOK_KEYS], which is why
+         * changing it needed the whole service restarted and he visibly blinked out and back.
+         * Nothing about his silhouette touches the window's geometry — ears and horns live inside
+         * the body's own padding — so it is an assignment and a redraw, and that is all.
+         */
+        fun syncAppearance() {
+            val view = ghost ?: return
+            val fresh = PetStore.read(ctx, slot)
+
+            val newHue = Prefs.colorHue(ctx)
+            if (newHue != lastTintHue) {
+                lastTintHue = newHue
+                view.setTint(newHue)
+            }
+
+            if (fresh.species != pet.species) {
+                view.species = fresh.species
+                // The loop may be throttled down to eight frames a second, or stopped altogether
+                // while he is in the box, so the redraw is asked for rather than waited for.
+                view.invalidate()
+            }
+
+            if (fresh.sizeDp != pet.sizeDp) {
+                val container = root ?: return
+                val newGhostPx = (fresh.sizeDp * density).toInt()
+                val newWindowPx = newGhostPx + haloPx * 2
+                val delta = (newWindowPx - windowPx) / 2f
+                posX -= delta
+                posY -= delta
+                ghostPx = newGhostPx
+                windowPx = newWindowPx
+                headroomPx = GhostView.headroomPx(density, ghostPx)
+                haloPadPx = GhostView.haloPadPx(ghostPx)
+                // The side room follows his size now, so it has to be recomputed here too.
+                sidePx = GhostView.bubbleSidePx(density, ghostPx)
+                clampIntoBounds()
+                params.width = windowPx + sidePx * 2
+                params.height = windowPx + headroomPx + haloPadPx
+                params.x = posX.toInt() - sidePx
+                params.y = posY.toInt()
+                view.setBodySize(ghostPx)
+                view.layoutParams = FrameLayout.LayoutParams(
+                    ghostPx + sidePx * 2,
+                    ghostPx + headroomPx + haloPadPx,
+                    android.view.Gravity.CENTER
+                )
+                runCatching { windowManager.updateViewLayout(container, params) }
+                lastAppliedX = params.x
+                lastAppliedY = params.y
+            }
+
+            if (fresh.shade != pet.shade) view.setShade(fresh.shade)
+
+            // Renaming him changes nothing you can see out here — but the notification says his
+            // name, and until this it went on saying the old one until he was next put to bed.
+            val renamed = fresh.name != pet.name
+
+            pet = fresh
+            if (renamed && pet.isPrimary) refreshNotification()
+        }
+
+        /** Feeding and napping happen in the app, not on the overlay; they arrive as pref changes. */
+        fun noteEvent(base: String) {
+            when (base) {
+                "fed_at" -> noteInteraction(PetEvent.FED)
+                "sleeping" -> if (Prefs.sleeping(ctx, slot)) noteInteraction(PetEvent.NAPPED)
+            }
+        }
+
+        /** Something the user did — the brain wants to know what happened last, and when. */
+        private fun noteInteraction(event: PetEvent) {
+            lastPetEvent = event
+            lastInteractionAt = System.currentTimeMillis()
+            ContentSync.recordEvent(ctx, event.id)
+        }
+
+        // endregion
+
+        // region the brain
+
+        /** Ask the brain what he feels like doing, and then do it. */
+        fun proposeBehaviour() {
+            val brain = engine()
+            if (!brain.isLoaded) return
+            val view = ghost ?: return
+            val petContext = PetContext.of(ctx, lastPetEvent, lastInteractionAt, slot)
+            val behaviour = brain.next(petContext, ContentSync.dailyBoosts(ctx)) ?: return
+            perform(behaviour, view)
+        }
+
+        /**
+         * Turn a decision into something you can see.
+         *
+         * The pack says what he feels and how he should move; this is the only place that knows how
+         * to express either. Nothing here overrides an act the user just took — a behaviour that
+         * arrives while he is being petted, eating or asleep is dropped, because his own moment
+         * beats the content pack's suggestion.
+         */
+        private fun perform(behaviour: Behaviour, view: GhostView) {
+            if (sleeping || petTriggered) return
+
+            behaviour.vocal?.let { view.showBubble(it, 1.9f) }
+
+            when (behaviour.emote) {
+                Emote.HAPPY -> {
+                    view.showExpression(Expression.SMILE, 2.2f)
+                    view.startWiggle()
+                }
+                Emote.AFFECTION -> {
+                    view.showExpression(Expression.DELIGHTED, 2.4f)
+                    view.spawnHeart()
+                }
+                Emote.SLEEPY -> view.showExpression(Expression.SLEEPY, 3.0f)
+                Emote.CURIOUS -> view.showExpression(Expression.CONFUSED, 2.2f)
+                Emote.SPOOKED -> view.spook()
+                Emote.MOODY -> view.spookLightly()
+                Emote.GOOFY -> view.setPuffTarget(0.30f * behaviour.intensity)
+                Emote.CONFIDENT -> view.setPuffTarget(0.10f * behaviour.intensity)
+                Emote.HUNGRY -> view.showExpression(Expression.CONFUSED, 1.6f)
+            }
+            if (behaviour.emote != Emote.GOOFY && behaviour.emote != Emote.CONFIDENT) {
+                view.setPuffTarget(0f)
+            }
+
+            // Locomotion is a nudge to the drift, never a teleport: he is a ghost, he glides.
+            val speed = driftSpeed * (0.6f + behaviour.intensity)
+            when (behaviour.locomotion) {
+                Locomotion.DRIFT -> driftAngle = Random.nextFloat() * 2f * PI.toFloat()
+                Locomotion.FLEE -> launch(angleTowardsOpenSpace())
+                Locomotion.APPROACH ->
+                    aimAt(usable.centerX().toFloat(), usable.centerY().toFloat(), speed * 2f)
+                Locomotion.PERCH_CORNER -> aimAt(nearestCornerX(), nearestCornerY(), speed * 1.6f)
+                Locomotion.ZOOMIES -> {
+                    launch(Random.nextFloat() * 2f * PI.toFloat())
+                    view.startWiggle()
+                }
+                Locomotion.STILL -> {
+                    velX = 0f
+                    velY = 0f
+                }
+                Locomotion.ROLLOVER, Locomotion.BOUNCE, Locomotion.ORBIT,
+                Locomotion.PACE, Locomotion.EDGE_SLIDE, Locomotion.PEEK ->
+                    startRoutine(behaviour.locomotion, behaviour.intensity, speed, view)
+            }
+        }
+
+        // endregion
+
+        // region touch
+
+        private fun onGhostTouch(event: MotionEvent): Boolean {
+            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                // Fires for every tap on screen while intangible, once per window. No coordinates —
+                // see the class doc. The deduping is the service's; see [noticeOutsideTap].
+                noticeOutsideTap(event.eventTime)
+                return false
+            }
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragging = false
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    downPosX = posX
+                    downPosY = posY
+                    downTime = SystemClock.uptimeMillis()
+                    lastDragX = event.rawX
+                    lastDragY = event.rawY
+                    lastDragNanos = System.nanoTime()
+                    velX = 0f
+                    velY = 0f
+                    val cx = posX + windowPx / 2f
+                    val cy = posY + headroomPx + windowPx / 2f
+                    ghost?.lookAt(
+                        (event.rawX - cx) / (windowPx / 2f),
+                        (event.rawY - cy) / (windowPx / 2f)
+                    )
+                    petTriggered = false
+                    pettingArmed = true
+                    handler.postDelayed(petRunnable, PET_HOLD_MS)
+                    return true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (!dragging && hypot(dx, dy) > touchSlop) {
+                        dragging = true
+                        pettingArmed = false
+                        handler.removeCallbacks(petRunnable)
+                    }
+                    if (dragging) {
+                        posX = downPosX + dx
+                        posY = downPosY + dy
+                        clampIntoBounds()
+                        applyPosition()
+
+                        val now = System.nanoTime()
+                        val dt = ((now - lastDragNanos) / 1e9f).coerceAtLeast(0.004f)
+                        velX = (event.rawX - lastDragX) / dt
+                        velY = (event.rawY - lastDragY) / dt
+                        lastDragX = event.rawX
+                        lastDragY = event.rawY
+                        lastDragNanos = now
+                        ghost?.setMotion(velX * 0.35f, velY * 0.35f)
+                    }
+                    return true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(petRunnable)
+                    pettingArmed = false
+                    if (!dragging) {
+                        if (petTriggered) {
+                            // Already petted via the hold — nothing more to do on release.
+                        } else if (sleeping) {
+                            // Stirred, not startled: a poke while napping just wakes him.
+                            wakeUp()
+                        } else {
+                            val now = SystemClock.uptimeMillis()
+                            val isSecondTap = now - lastTapUpAt < DOUBLE_TAP_MS &&
+                                hypot(event.rawX - lastTapX, event.rawY - lastTapY) < touchSlop * 3
+                            if (isSecondTap) {
+                                // Caught the pending flee from the first tap in time — open the app
+                                // instead of letting him bolt.
+                                pendingTapRunnable?.let { handler.removeCallbacks(it) }
+                                pendingTapRunnable = null
+                                lastTapUpAt = 0L
+                                openApp()
+                            } else {
+                                lastTapUpAt = now
+                                lastTapX = event.rawX
+                                lastTapY = event.rawY
+                                val fx = event.rawX
+                                val fy = event.rawY
+                                val runnable = Runnable { fleeFrom(fx, fy) }
+                                pendingTapRunnable = runnable
+                                handler.postDelayed(runnable, DOUBLE_TAP_MS)
+                            }
+                        }
+                    } else {
+                        // Released mid-drag: keep the throw, but keep it sane.
+                        val speed = hypot(velX, velY)
+                        val maxSpeed = 700f * density
+                        if (speed > maxSpeed) {
+                            velX = velX / speed * maxSpeed
+                            velY = velY / speed * maxSpeed
+                        }
+                        driftAngle = atan2(velY, velX)
+                        Prefs.savePosition(ctx, posX, posY, slot)
+                    }
+                    dragging = false
+                    return true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(petRunnable)
+                    pettingArmed = false
+                    dragging = false
+                    return true
+                }
+            }
+            return false
+        }
+
+        /**
+         * A tap landed somewhere on screen while he is intangible. He cannot know where, so he
+         * reacts to all of them — but he gets used to them: a burst of taps (you are typing) earns
+         * a longer cooldown and a smaller flinch than one deliberate poke out of the blue.
+         */
+        fun noticeTap() {
+            if (sleeping) {
+                wakeUp()
+                return
+            }
+            val now = SystemClock.uptimeMillis()
+            while (recentTaps.isNotEmpty() && now - recentTaps.first() > 4_000) recentTaps.removeFirst()
+            recentTaps.addLast(now)
+            val burst = recentTaps.size
+
+            // He looks towards whatever seems to be going on: a flurry of taps is almost always the
+            // keyboard, so he watches the bottom of the screen; a lone tap just makes him glance
+            // about.
+            if (burst >= 3) {
+                lookAtScreen(bounds.width() * 0.5f, bounds.height() * 0.86f)
+            } else {
+                lookAtScreen(
+                    bounds.width() * (0.2f + Random.nextFloat() * 0.6f),
+                    bounds.height() * (0.3f + Random.nextFloat() * 0.5f)
+                )
+            }
+            nextGlanceAt = clock + 1.6f
+
+            // Angry, he's a good deal less patient with commotion — shorter fuse, bigger flinch.
+            val angry = mood == Mood.ANGRY
+            val cooldown = when {
+                burst >= 6 -> 2_600L   // busy screen: he settles down and mostly just watches
+                burst >= 3 -> 1_100L
+                else -> 320L
+            } / (if (angry) 2 else 1)
+            val view = ghost ?: return
+            if (now - lastReactionAt < cooldown) {
+                view.notice()
+                return
+            }
+            lastReactionAt = now
+
+            // Drift away from the commotion. Direction is random — with a lean towards open screen,
+            // so he does not spend his life pinned against an edge.
+            val angle = angleTowardsOpenSpace()
+            val impulse = (if (burst >= 3) 90f else 190f + Random.nextFloat() * 120f) *
+                density * (if (angry) 1.4f else 1f)
+            velX += cos(angle) * impulse
+            velY += sin(angle) * impulse
+            driftAngle = angle
+            view.notice()
+            if (burst < 3) buzz()
+        }
+
+        /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
+        private fun stroke() {
+            noteInteraction(PetEvent.PETTED)
+            val now = SystemClock.uptimeMillis()
+            if (now - lastPetAt < PET_ANIMATION_MS) return
+            lastPetAt = now
+            val s = PetStats.snapshot(ctx, slot = slot)
+            val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
+            Prefs.saveStats(ctx, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis(), slot)
+            ghost?.startPetting()
+            // Still held: keep ticking affection for as long as the finger stays put.
+            handler.postDelayed(petRunnable, PET_ANIMATION_MS)
+        }
+
+        /** A poke while napping: stir awake with a small startle rather than a full bolt. */
+        private fun wakeUp() {
+            PetStats.wake(ctx, slot)
+            sleeping = false
+            ghost?.setMood(mood, false)
+            ghost?.notice()
+            ghost?.spookLightly()
+        }
+
+        // endregion
+
+        // region motion
+
+        /** Puts his body's top-left at a screen point, clamped to where he is allowed to be. */
+        fun placeBodyAt(x: Float, y: Float) {
+            posX = x
+            posY = y - headroomPx
+            velX = 0f
+            velY = 0f
+            clampIntoBounds()
+            applyPosition()
+        }
+
+        /**
+         * The flight home. He eases towards the point the app named and stops there, and nothing
+         * else — drift, flourishes, the behaviour engine — gets a say until he lands.
+         */
+        fun startHoming(x: Float, y: Float) {
+            homingToX = x
+            homingToY = y - headroomPx
+            homing = true
+            homingUntil = clock + HOMING_TIMEOUT_SECONDS
+        }
+
+        /** Dash off in a random direction, generally away from [fromX], [fromY]. */
+        private fun fleeFrom(fromX: Float, fromY: Float) {
+            noteInteraction(PetEvent.SPOOKED)
+            val cx = posX + windowPx / 2f
+            val cy = posY + headroomPx + windowPx / 2f
+            var dx = cx - fromX
+            var dy = cy - fromY
+            val len = hypot(dx, dy)
+            val baseAngle = if (len < 1f) {
+                Random.nextFloat() * 2f * PI.toFloat()
+            } else {
+                dx /= len
+                dy /= len
+                atan2(dy, dx)
+            }
+            // Away from the finger, but with a wide random spread so it never feels scripted.
+            launch(baseAngle + (Random.nextFloat() - 0.5f) * 1.9f)
+        }
+
+        private fun launch(angle: Float) {
+            // Ghostly, not startled-cat: he glides away rather than snapping across the screen.
+            // Angry, that glide gets a noticeably harder edge.
+            val angryBoost = if (mood == Mood.ANGRY) 1.5f else 1f
+            val speed = (320f + Random.nextFloat() * 260f) * density * angryBoost
+            velX = cos(angle) * speed
+            velY = sin(angle) * speed
+            driftAngle = angle
+            ghost?.spook()
+            ghost?.setMotion(velX, velY)
+            buzz()
+        }
+
+        /** Point him at a spot and give him just enough push to drift there. */
+        private fun aimAt(targetX: Float, targetY: Float, speed: Float) {
+            val cx = posX + windowPx / 2f
+            val cy = posY + headroomPx + windowPx / 2f
+            val angle = atan2(targetY - cy, targetX - cx)
+            driftAngle = angle
+            velX = cos(angle) * speed
+            velY = sin(angle) * speed
+            ghost?.setMotion(velX, velY)
+        }
+
+        private fun nearestCornerX(): Float =
+            if (posX + windowPx / 2f < usable.centerX()) {
+                usable.left + windowPx / 2f
+            } else {
+                usable.right - windowPx / 2f
+            }
+
+        // "Corner" now means the side of the screen at a comfortable height, not the actual corner:
+        // the real ones are in the band he stays out of.
+        private fun nearestCornerY(): Float =
+            (if (posY < usable.centerY()) usable.top + windowPx else usable.bottom - windowPx)
+                .toFloat()
+                .coerceIn(minY(), maxY())
+
+        /** A heading that generally points back into the middle of the screen, plus a wide spread. */
+        private fun angleTowardsOpenSpace(): Float {
+            val cx = posX + windowPx / 2f
+            val cy = posY + headroomPx + windowPx / 2f
+            val toCentre = atan2(bounds.height() / 2f - cy, bounds.width() / 2f - cx)
+            return toCentre + (Random.nextFloat() - 0.5f) * 3.0f
+        }
+
+        /** Point his eyes at a spot on the screen. */
+        private fun lookAtScreen(x: Float, y: Float) {
+            gazeScreenX = x
+            gazeScreenY = y
+        }
+
+        private fun updateGaze(dt: Float) {
+            val view = ghost ?: return
+            val speed = hypot(velX, velY)
+
+            // Gliding fast? He watches where he is going. Otherwise he looks around the room.
+            if (speed > 90f * density) {
+                view.lookAt(velX / speed, velY / speed)
+                nextGlanceAt = clock + 0.8f
+                return
+            }
+
+            if (clock > nextGlanceAt) {
+                lookAtScreen(
+                    bounds.width() * (0.08f + Random.nextFloat() * 0.84f),
+                    bounds.height() * (0.08f + Random.nextFloat() * 0.84f)
+                )
+                nextGlanceAt = clock + 1.4f + Random.nextFloat() * 2.6f
+            }
+
+            val cx = posX + windowPx / 2f
+            val cy = posY + headroomPx + windowPx / 2f
+            val dx = gazeScreenX - cx
+            val dy = gazeScreenY - cy
+            val len = hypot(dx, dy)
+            if (len < 1f) return
+            // Normalised direction; anything more than a screen-quarter away is a full-strength look.
+            val reach = (len / (bounds.width() * 0.25f)).coerceAtMost(1f)
+            view.lookAt(dx / len * reach, dy / len * reach)
+        }
+
+        private fun tick(dt: Float) {
+            val view = ghost ?: return
+            if (dragging) return
+
+            if (clock > nextStatsTickAt) {
+                nextStatsTickAt = clock + 10f
+                refreshMood()
+            }
+
+            if (homing) {
+                tickHoming(dt)
+                return
+            }
+
+            if (routine != null) {
+                tickRoutine(dt)
+                return
+            }
+
+            if (sleeping) {
+                // Settle to a stop and stay put rather than drifting off mid-nap.
+                val settle = 1f - exp(-2.5f * dt)
+                velX -= velX * settle
+                velY -= velY * settle
+                posX += velX * dt
+                posY += velY * dt
+                clampIntoBounds()
+                view.setMotion(velX, velY)
+                applyPosition()
+                return
+            }
+
+            updateGaze(dt)
+
+            if (clock > nextFlourishAt) {
+                nextFlourishAt = clock + 25f + Random.nextFloat() * 25f
+                runFlourish()
+            }
+
+            if (clock < goofyUntil) {
+                // Puffed up, floating and holding in a corner rather than the usual drift.
+                val settle = 1f - exp(-1.6f * dt)
+                velX += ((goofyCornerX - posX) * 1.4f - velX) * settle
+                velY += ((goofyCornerY - posY) * 1.4f - velY) * settle
+                posX += velX * dt
+                posY += velY * dt
+                clampIntoBounds()
+                view.setMotion(velX, velY)
+                applyPosition()
+                return
+            }
+            view.setPuffTarget(if (energyFull) 0.1f else 0f)
+            if (clock > nextGoofyCheckAt) {
+                nextGoofyCheckAt = clock + 45f + Random.nextFloat() * 40f
+                triggerGoofy()
+            }
+
+            // He is never quite still: the heading wanders, and the speed always settles back to a
+            // slow float rather than to zero. Angry, that float turns into a restless, erratic pace
+            // — he's not going anywhere, but he's clearly not settled either. Brimming with energy,
+            // the float turns quicker and more purposeful instead.
+            val angryJitter = if (mood == Mood.ANGRY) 2.6f else 1f
+            val angrySpeed = if (mood == Mood.ANGRY) 1.6f else if (energyFull) 1.3f else 1f
+            driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
+            val targetX = cos(driftAngle) * driftSpeed * angrySpeed
+            val targetY = sin(driftAngle) * driftSpeed * angrySpeed
+            // A pull back up out of the bottom of the screen, cubed so it is nothing in the middle
+            // and firm by the time he is down near the gesture bar. Downward only: the top of the
+            // screen is his to use, and pulling him off it was why he never seemed to reach the bar
+            // up there.
+            val bandMid = (minY() + maxY()) / 2f
+            val bandHalf = ((maxY() - minY()) / 2f).coerceAtLeast(1f)
+            val strayed = ((posY - bandMid) / bandHalf).coerceIn(0f, 1f)
+            val recentre = -(strayed * strayed * strayed) * driftSpeed * 0.9f
+
+            val settle = 1f - exp(-0.85f * dt)
+            velX += (targetX - velX) * settle
+            velY += (targetY + recentre - velY) * settle
+
+            posX += velX * dt
+            posY += velY * dt
+
+            // Bounce off the screen edges, losing a bit of energy each time.
+            if (posX < minX()) {
+                posX = minX(); bounceHorizontally()
+            } else if (posX > maxX()) {
+                posX = maxX(); bounceHorizontally()
+            }
+            if (posY < minY()) {
+                posY = minY(); bounceVertically()
+            } else if (posY > maxY()) {
+                posY = maxY(); bounceVertically()
+            }
+
+            view.setMotion(velX, velY)
+            applyPosition()
+        }
+
+        /** A hungry buzz + species call, or — when he's doing well — a happy little vocalisation. */
+        private fun runFlourish() {
+            val view = ghost ?: return
+            val s = Emotions.snapshot(ctx, slot)
+            val species = pet.species
+            when {
+                s.body.hunger <= PetStats.HUNGRY_THRESHOLD -> {
+                    buzz()
+                    view.showBubble(species.callHungry)
+                }
+                mood == Mood.CONTENT && s.body.happiness >= 70f -> {
+                    view.showBubble(species.callHappy)
+                    // Half the time he shimmies about it as well, so a good mood doesn't always
+                    // look like exactly the same two seconds.
+                    if (Random.nextBoolean()) view.startWiggle()
+                }
+            }
+        }
+
+        /** Puffs him up and picks a screen corner to float over to and hold in for a few seconds. */
+        private fun triggerGoofy() {
+            if (sleeping || mood != Mood.CONTENT) return
+            goofyUntil = clock + 4.5f
+            goofyCornerX = if (Random.nextBoolean()) minX() else maxX()
+            goofyCornerY = if (Random.nextBoolean()) minY() else maxY()
+            ghost?.setPuffTarget(0.32f)
+        }
+
+        /**
+         * Nothing should hold him against the side of the screen for long — not a set piece that
+         * ran out of room, not a launch that spent itself into a corner, not a target that happened
+         * to sit on the edge. If he is still there after a second and a bit, he peels off and does
+         * something else.
+         */
+        private fun watchForPinning() {
+            if (dragging || homing || sleeping) {
+                pinnedSince = 0f
+                return
+            }
+            if (!atEdge()) {
+                pinnedSince = 0f
+                return
+            }
+            if (pinnedSince == 0f) {
+                pinnedSince = clock
+                return
+            }
+            if (clock - pinnedSince < PINNED_SECONDS) return
+            pinnedSince = 0f
+            val view = ghost ?: return
+            // Away from whichever wall he is on, then on with something new.
+            val awayX = when {
+                posX <= minX() + 1f -> 1f
+                posX >= maxX() - 1f -> -1f
+                else -> 0f
+            }
+            val awayY = when {
+                posY <= minY() + 1f -> 1f
+                posY >= maxY() - 1f -> -1f
+                else -> 0f
+            }
+            driftAngle = atan2(
+                if (awayY == 0f) (Random.nextFloat() - 0.5f) else awayY,
+                if (awayX == 0f) (Random.nextFloat() - 0.5f) else awayX
+            )
+            velX = cos(driftAngle) * driftSpeed * 1.4f
+            velY = sin(driftAngle) * driftSpeed * 1.4f
+            routine = null
+            if (Random.nextFloat() < 0.4f) {
+                startRoutine(EDGE_RECOVERY_MOVES.random(), 0.6f, driftSpeed * 1.5f, view)
+            }
+        }
+
+        /**
+         * Starts one of the set-piece movements. Each is given a few seconds, an anchor at wherever
+         * he is standing, and then runs itself in [tickRoutine] until its time is up.
+         */
+        private fun startRoutine(kind: Locomotion, intensity: Float, speed: Float, view: GhostView) {
+            routine = kind
+            routineAnchorX = posX
+            routineAnchorY = posY
+            routineDir = if (Random.nextBoolean()) 1f else -1f
+            routineSpeed = speed
+            velX = 0f
+            velY = 0f
+            when (kind) {
+                Locomotion.ROLLOVER -> {
+                    val seconds = 1.5f + intensity * 1.2f
+                    routineUntil = clock + seconds
+                    // Tips over as he drifts: the sideways glide is what stops it reading as a spin.
+                    velX = routineDir * speed * 1.4f
+                    velY = -speed * 0.25f
+                    view.startRoll(seconds, if (intensity > 0.8f) 2f else 1f)
+                }
+                Locomotion.BOUNCE -> {
+                    routineUntil = clock + 3.4f
+                    velX = routineDir * speed * 0.9f
+                    velY = -speed * 3.2f
+                }
+                Locomotion.ORBIT -> {
+                    routineUntil = clock + 3.2f + intensity * 2f
+                    // Anchored on the middle of the loop, not on him, so he circles something.
+                    val radius = minOf(usable.width(), usable.height()) * 0.16f
+                    routineAngle = Random.nextFloat() * 2f * PI.toFloat()
+                    routineAnchorX = posX - cos(routineAngle) * radius
+                    routineAnchorY = posY - sin(routineAngle) * radius
+                    routineSpeed = radius
+                }
+                Locomotion.PACE -> {
+                    routineUntil = clock + 4f
+                    routineSpeed = minOf(usable.width() * 0.22f, ghostPx * 3.2f)
+                    velX = routineDir * speed * 1.6f
+                }
+                Locomotion.EDGE_SLIDE -> {
+                    routineUntil = clock + 3.6f
+                    routineAnchorX = if (posX + windowPx / 2f < usable.centerX()) minX() else maxX()
+                    velY = routineDir * speed * 1.5f
+                }
+                Locomotion.PEEK -> {
+                    routineUntil = clock + 3.8f
+                    // Off the near edge by most of himself, so only a sliver of him is left showing.
+                    val leaving = posX + windowPx / 2f < usable.centerX()
+                    routineAnchorX =
+                        if (leaving) minX() - ghostPx * 0.62f else maxX() + ghostPx * 0.62f
+                    routineDir = if (leaving) -1f else 1f
+                }
+                else -> routine = null
+            }
+        }
+
+        /**
+         * Runs whichever set piece is active. Each one steers him directly rather than nudging his
+         * drift, and when its time is up he is handed back to the ordinary wander.
+         */
+        private fun tickRoutine(dt: Float) {
+            val view = ghost ?: return
+            val kind = routine ?: return
+            if (clock > routineUntil) {
+                routine = null
+                driftAngle = atan2(velY, velX)
+                return
+            }
+            val settle = 1f - exp(-4f * dt)
+            when (kind) {
+                Locomotion.BOUNCE -> {
+                    velY += 1_500f * density * dt
+                    posX += velX * dt
+                    posY += velY * dt
+                    if (posY >= maxY()) {
+                        posY = maxY()
+                        // Each landing takes a bite out of the bounce, so it dies down rather than
+                        // going forever, and he squashes on impact.
+                        velY = -velY * 0.62f
+                        if (abs(velY) < 60f * density) {
+                            velY = 0f
+                            routineUntil = clock
+                        } else {
+                            view.squash(minOf(1.2f, abs(velY) / (600f * density)))
+                            buzz()
+                        }
+                    }
+                }
+                Locomotion.ORBIT -> {
+                    routineAngle += dt * (1.6f + routineSpeed / (240f * density))
+                    val nx = routineAnchorX + cos(routineAngle) * routineSpeed
+                    val ny = routineAnchorY + sin(routineAngle) * routineSpeed
+                    velX = (nx - posX) / dt.coerceAtLeast(0.001f)
+                    velY = (ny - posY) / dt.coerceAtLeast(0.001f)
+                    posX = nx
+                    posY = ny
+                }
+                Locomotion.PACE -> {
+                    posX += velX * dt
+                    if (abs(posX - routineAnchorX) > routineSpeed) {
+                        velX = -velX
+                        posX = routineAnchorX + routineSpeed * (if (posX > routineAnchorX) 1f else -1f)
+                        view.lookAt(if (velX > 0f) 1f else -1f, 0f)
+                    }
+                }
+                Locomotion.EDGE_SLIDE -> {
+                    velX += ((routineAnchorX - posX) * 3.4f - velX) * settle
+                    posX += velX * dt
+                    posY += velY * dt
+                    if (posY <= minY() || posY >= maxY()) velY = -velY
+                }
+                Locomotion.PEEK -> {
+                    // Out for the first half, leaning back in for the second.
+                    val goingOut = clock < routineUntil - 1.6f
+                    val targetX =
+                        if (goingOut) routineAnchorX else routineAnchorX - routineDir * ghostPx * 1.4f
+                    velX += ((targetX - posX) * 3.2f - velX) * settle
+                    posX += velX * dt
+                    view.lookAt(-routineDir, 0f)
+                }
+                Locomotion.ROLLOVER -> {
+                    posX += velX * dt
+                    posY += velY * dt
+                    velY += 40f * density * dt
+                }
+                else -> Unit
+            }
+            // Peek and the bounce's floor are *meant* to press against an edge; everything else that
+            // reaches one has run out of room, and grinding along the wall until its few seconds are
+            // up is the one thing that makes him look like a bug rather than a pet.
+            val pressing = kind != Locomotion.PEEK
+            val hitX = pressing && (posX < minX() || posX > maxX())
+            val hitY = pressing && kind != Locomotion.BOUNCE && (posY < minY() || posY > maxY())
+            clampIntoBounds()
+            if (hitX || hitY) {
+                if (hitX) velX = -abs(velX) * sign(if (posX <= minX()) 1f else -1f)
+                if (hitY) velY = -abs(velY) * sign(if (posY <= minY()) 1f else -1f)
+                hitEdgeMidMovement(view)
+                return
+            }
+            view.setMotion(velX, velY)
+            applyPosition()
+        }
+
+        /**
+         * He has run into the side of the screen partway through doing something. Rather than
+         * pressing on into it for the rest of the routine, he turns away — and half the time
+         * changes his mind about what he was doing altogether and starts something else.
+         */
+        private fun hitEdgeMidMovement(view: GhostView) {
+            routine = null
+            driftAngle = atan2(velY, velX)
+            ghost?.spookLightly()
+            if (Random.nextFloat() < 0.5f) {
+                val next = EDGE_RECOVERY_MOVES.random()
+                startRoutine(next, 0.6f, driftSpeed * (1.2f + Random.nextFloat()), view)
+            }
+            view.setMotion(velX, velY)
+            applyPosition()
+        }
+
+        private fun tickHoming(dt: Float) {
+            val view = ghost ?: return
+            val dx = homingToX - posX
+            val dy = homingToY - posY
+            val dist = hypot(dx, dy)
+            if (dist < 4f || clock > homingUntil) {
+                posX = homingToX
+                posY = homingToY
+                velX = 0f
+                velY = 0f
+                view.setMotion(0f, 0f)
+                applyPosition(force = true)
+                homing = false
+                // [arrivedHome] is what the app waits on before it takes him over, and there is one
+                // box — only the pet it is waiting for may report having landed in it.
+                if (pet.isPrimary) arrivedHome = true
+                return
+            }
+            // Fast, but eased, so he arrives settling rather than slamming into place.
+            val speed = (dist * 4.5f).coerceIn(driftSpeed * 6f, driftSpeed * 34f)
+            val settle = 1f - exp(-9f * dt)
+            velX += (dx / dist * speed - velX) * settle
+            velY += (dy / dist * speed - velY) * settle
+            posX += velX * dt
+            posY += velY * dt
+            view.setMotion(velX, velY)
+            view.lookAt(dx / dist, dy / dist)
+            applyPosition()
+        }
+
+        private fun bounceHorizontally() {
+            velX = -velX * 0.5f
+            driftAngle = PI.toFloat() - driftAngle
+            ghost?.spookLightly()
+        }
+
+        private fun bounceVertically() {
+            velY = -velY * 0.5f
+            driftAngle = -driftAngle
+            ghost?.spookLightly()
+        }
+
+        // endregion
+
+        // region bounds
+
+        // The ghost — not the window's transparent halo — is what has to stay on screen.
+        // A sliver of overhang still looks good — he nuzzles the edge — but never enough to hide him
+        // behind a system bar.
+        private fun overhang() = ghostPx * 0.05f
+
+        /**
+         * The strip of screen he is allowed in. At the top he may go right up to the system bar —
+         * there is nothing up there he gets in the way of. At the bottom he stops [BAND_MARGIN]
+         * short, which keeps him off the gesture bar and off whatever an app puts along its own
+         * bottom edge. Enforced through [minY]/[maxY], so drift, perching, bouncing and every set
+         * piece inherit it rather than each having to remember.
+         */
+        // The very top of the display, not the top of the *usable* area: the usable rect starts
+        // below the status bar, which left him stopping a bar's height short of where he should be
+        // able to go.
+        private fun bandTop(): Float = bounds.top.toFloat()
+
+        private fun bandBottom(): Float =
+            minOf(usable.bottom.toFloat(), bounds.height() * (1f - BAND_MARGIN))
+
+        private fun minX() = usable.left - haloPx - overhang()
+        private fun maxX() = usable.right - windowPx + haloPx + overhang()
+        // His body starts headroomPx below the top of the window, so the vertical bounds shift by
+        // it: he may sit at the very top of the screen with the bubble space hanging off-screen
+        // above.
+        private fun minY() = bandTop() - haloPx - headroomPx
+        // The window is windowPx + headroomPx tall and his body sits in the BOTTOM of it, so the
+        // floor has to come up by the headroom as well — without this he sinks below the navigation
+        // bar by exactly the height of his own speech bubble.
+        private fun maxY() = bandBottom() - headroomPx - windowPx + haloPx
+
+        /** Against any wall right now, near enough. */
+        private fun atEdge(): Boolean =
+            posX <= minX() + 1f || posX >= maxX() - 1f || posY <= minY() + 1f || posY >= maxY() - 1f
+
+        fun clampIntoBounds() {
+            posX = posX.coerceIn(minX(), maxX())
+            posY = posY.coerceIn(minY(), maxY())
+            keepOutOfCorners()
+        }
+
+        /**
+         * Never in the very corner of the screen. Phone screens are rounded there, so a ghost in a
+         * corner is a ghost with a bite taken out of him — and the top corners are where the clock
+         * and the status icons live. He is slid along whichever edge he is on until he is clear.
+         */
+        private fun keepOutOfCorners() {
+            val pad = CORNER_KEEPOUT_DP * density
+            val nearSide = posX <= minX() + pad || posX >= maxX() - pad
+            if (!nearSide) return
+            if (posY <= minY() + pad) posY = minY() + pad
+            else if (posY >= maxY() - pad) posY = maxY() - pad
+        }
+
+        /**
+         * [force] skips the movement threshold. Used where the exact pixel matters rather than the
+         * saved relayout: landing at the end of a flight home, where the box is about to fade in on
+         * the precise point he was sent to and a leftover dp of slack shows up as a jump.
+         */
+        private fun applyPosition(force: Boolean = false) {
+            val view = root ?: return
+            val nx = posX.toInt()
+            val ny = posY.toInt()
+            // Moving the window is a system relayout and recomposite — by far the most expensive
+            // thing done per frame. A single pixel of drift is not worth one, and at this speed the
+            // old pixel-exact test let almost every frame through.
+            if (!force &&
+                abs(nx - lastAppliedX) < moveThresholdPx &&
+                abs(ny - lastAppliedY) < moveThresholdPx
+            ) {
+                return
+            }
+            lastAppliedX = nx
+            lastAppliedY = ny
+            params.x = nx - sidePx
+            params.y = ny
+            // The app reads these to pick him up where he is, and it only ever picks up one of them.
+            if (pet.isPrimary) {
+                bodyX = posX
+                bodyY = posY + headroomPx
+            }
+            runCatching { windowManager.updateViewLayout(view, params) }
+        }
+
+        // endregion
+    }
+
+    // endregion
+
+    // region lifecycle
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -575,7 +1868,7 @@ class GhostOverlayService : Service() {
             val visiting = intent.getBooleanExtra(EXTRA_VISITING, false)
             // Coming back out, he reappears exactly where the box was drawing him.
             if (!visiting) {
-                intent.bodyPoint()?.let { (x, y) -> placeBodyAt(x, y) }
+                intent.bodyPoint()?.let { (x, y) -> primary()?.placeBodyAt(x, y) }
                 intent.adoptIdleClock()
             }
             setVisiting(visiting)
@@ -584,12 +1877,12 @@ class GhostOverlayService : Service() {
 
         if (intent?.action == ACTION_COME_HOME) {
             intent.bodyPoint()?.let { (x, y) ->
-                homingToX = x
-                homingToY = y - headroomPx
-                homing = true
-                homingUntil = clock + HOMING_TIMEOUT_SECONDS
-                arrivedHome = false
-                startLoop()
+                // The box holds one ghost, so it is the primary who flies to it.
+                primary()?.let { p ->
+                    p.startHoming(x, y)
+                    arrivedHome = false
+                    startLoop()
+                }
             }
             return START_STICKY
         }
@@ -601,10 +1894,10 @@ class GhostOverlayService : Service() {
 
         startForeground(NOTIFICATION_ID, buildNotification())
         val spawn = intent?.bodyPoint()
-        if (root == null) {
-            attachGhost(spawn)
+        if (pets.isEmpty()) {
+            attachOverlay(spawn)
         } else {
-            spawn?.let { (x, y) -> placeBodyAt(x, y) }
+            spawn?.let { (x, y) -> primary()?.placeBodyAt(x, y) }
             startLoop()
         }
         intent?.adoptIdleClock()
@@ -619,111 +1912,52 @@ class GhostOverlayService : Service() {
     override fun onDestroy() {
         isVisiting = false
         isRunning = false
-        // Remember where he was, so he reappears in the same spot next time.
-        if (root != null) Prefs.savePosition(this, posX, posY)
         stopLoop()
         handler.removeCallbacksAndMessages(null)
-        if (root != null) runCatching { unregisterReceiver(screenReceiver) }
+        // Remembers where each of them was, so they reappear in the same spots next time.
+        for (p in pets) p.detach()
+        pets.clear()
+        if (receiverRegistered) {
+            runCatching { unregisterReceiver(screenReceiver) }
+            receiverRegistered = false
+        }
         prefsListener?.let { runCatching { Prefs.raw(this).unregisterOnSharedPreferenceChangeListener(it) } }
         prefsListener = null
         Watchdog.cancel(this)
-        root?.let { view -> runCatching { windowManager.removeView(view) } }
-        root = null
-        ghost = null
         super.onDestroy()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         refreshBounds()
-        clampIntoBounds()
+        for (p in pets) p.clampIntoBounds()
     }
+
+    // endregion
 
     // region setup
 
-    private fun attachGhost(spawn: Pair<Float, Float>? = null) {
+    /**
+     * Puts the roster on screen and wires up everything shared: the screen receiver, the preference
+     * listener, the frame loop and the two timers.
+     *
+     * Exactly one pet goes up — the primary, on his flat preference keys. He is assembled through
+     * [PetStore] rather than read straight out of [Prefs] so that adding the rest is a change to
+     * this one line.
+     */
+    private fun attachOverlay(spawn: Pair<Float, Float>? = null) {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         density = resources.displayMetrics.density
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         clickThrough = Prefs.clickThrough(this)
-        lastSizeDp = Prefs.sizeDp(this)
-        ghostPx = (lastSizeDp * density).toInt()
-        haloPx = if (clickThrough) 0 else (HALO_DP * density).toInt()
-        windowPx = ghostPx + haloPx * 2
-        headroomPx = GhostView.headroomPx(density, ghostPx)
-        sidePx = GhostView.bubbleSidePx(density, ghostPx)
         moveThresholdPx = maxOf(1, density.toInt())
-        haloPadPx = GhostView.haloPadPx(ghostPx)
-        driftSpeed = 18f * density
         refreshBounds()
 
-        val view = GhostView(this)
-        view.setBodySize(ghostPx)
-        view.setShade(Prefs.shade(this))
-        view.species = Prefs.species(this)
-        lastTintHue = Prefs.colorHue(this)
-        view.setTint(lastTintHue)
-        ghost = view
-        val container = FrameLayout(this).apply {
-            addView(
-                view,
-                FrameLayout.LayoutParams(
-                    ghostPx + sidePx * 2,
-                    ghostPx + headroomPx + haloPadPx,
-                    android.view.Gravity.CENTER
-                )
-            )
-        }
-        root = container
-
-        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-        if (clickThrough) {
-            // Nothing is ever swallowed; he only hears the tap go past him.
-            flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-        }
-
-        params = WindowManager.LayoutParams(
-            windowPx + sidePx * 2,
-            windowPx + headroomPx + haloPadPx,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            flags,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            // Android's touch-filtering treats a FLAG_NOT_TOUCHABLE overlay left at the default
-            // alpha (1.0) as fully opaque for tapjacking purposes, regardless of how transparent
-            // its actual drawing is — since Android 12 that blocks the tap from reaching the app
-            // underneath entirely. The platform will clamp this for us if we don't (visible as a
-            // "setting alpha to 0.80" warning in logcat), but relying on that silent correction
-            // instead of setting it ourselves isn't guaranteed across OS versions/OEM skins.
-            if (clickThrough) alpha = 0.8f
-        }
-
-        // Sent out from the box, he starts exactly where the box was drawing him, so the hand-off
-        // between the two is invisible: same ghost, same spot, and only then does he drift off.
-        if (spawn != null) {
-            posX = spawn.first
-            posY = spawn.second - headroomPx
-        } else {
-            posX = Prefs.lastX(this, bounds.width() * 0.72f)
-            posY = Prefs.lastY(this, bounds.height() * 0.35f)
-        }
-        clampIntoBounds()
-        params.x = posX.toInt() - sidePx
-        params.y = posY.toInt()
-
-        container.setOnTouchListener { _, event -> onGhostTouch(event) }
-        // Handed over from the box he arrives at full strength, on the spot and at the point in
-        // his bob the box last drew him at — the same picture, so the box can drop away beneath
-        // him without anything showing. Only a cold start (the notification, the watchdog) has
-        // nothing to take over from, and fades in.
-        container.alpha = if (spawn != null) 1f else 0f
-        windowManager.addView(container, params)
-        if (spawn == null) container.animate().alpha(1f).setDuration(FADE_MS).start()
+        pets.clear()
+        pets += FloatingPet(PetStore.primary(this))
+        // Only the pet the app handed over starts on the spot the app names; the rest go back to
+        // wherever they were left.
+        for (p in pets) p.attach(if (p.pet.isPrimary) spawn else null)
 
         isRunning = true
         registerReceiver(
@@ -734,271 +1968,76 @@ class GhostOverlayService : Service() {
                 addAction(Intent.ACTION_USER_PRESENT)
             }
         )
+        receiverRegistered = true
         startLoop()
 
         // Feeding, playing or napping from the app writes straight to Prefs; catch it here too, so
-        // he doesn't wait up to ten seconds to visibly react. A size or colour change from the
-        // Style tab lands here too, resized/retinted in place rather than needing a restart.
+        // he doesn't wait up to ten seconds to visibly react. A size, shade or species change from
+        // the Style tab lands here too, applied in place rather than needing a restart.
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            noteEvent(key)
+            key ?: return@OnSharedPreferenceChangeListener
+            // Click-through is the account's setting, not a pet's: no slot, and it rebuilds every
+            // window there is.
+            if (key == CLICK_THROUGH_KEY) {
+                if (Prefs.clickThrough(this) != clickThrough) recreateWindow()
+                return@OnSharedPreferenceChangeListener
+            }
+            // Everything else per-pet arrives under a key with the slot on the end for every pet
+            // but the first — `hunger#3` — so matching the stored key against a flat name would
+            // quietly stop noticing anyone but the primary. Take it apart, then hand the change to
+            // the pet it is actually about.
+            val base = Prefs.baseOf(key)
             // Any write at all used to trigger both of these — including the stats this very
             // service writes on its own ten-second tick, and the sync layer's bookkeeping.
-            if (key in MOOD_KEYS) refreshMood()
-            if (key in LOOK_KEYS) syncAppearance()
-            if (key == CLICK_THROUGH_KEY && Prefs.clickThrough(this) != clickThrough) {
-                recreateWindow()
-            }
+            if (base !in MOOD_KEYS && base !in LOOK_KEYS) return@OnSharedPreferenceChangeListener
+            val target = pets.firstOrNull { it.slot == Prefs.slotOf(key) }
+                ?: return@OnSharedPreferenceChangeListener
+            target.noteEvent(base)
+            if (base in MOOD_KEYS) target.refreshMood()
+            if (base in LOOK_KEYS) target.syncAppearance()
         }
         prefsListener = listener
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
-        refreshMood()
         handler.postDelayed(behaviourRunnable, BEHAVIOUR_INTERVAL_MS)
         handler.postDelayed(syncRunnable, FIRST_SYNC_DELAY_MS)
     }
 
     /**
      * The click-through setting decides `FLAG_NOT_TOUCHABLE` and `FLAG_WATCH_OUTSIDE_TOUCH`, both
-     * read only when the window is added — there is no `updateViewLayout` for flags the way there
-     * is for size. So a change tears the window down and puts up a fresh one, at the same spot,
-     * rather than trying to mutate it live.
+     * read only when a window is added — there is no `updateViewLayout` for flags the way there
+     * is for size. So a change tears every window down and puts fresh ones up, each at the same
+     * spot, rather than trying to mutate them live.
      *
-     * If he is visiting the box when the setting changes, the rebuilt window is put back into that
-     * same hidden, stopped state instead of fading in over the app — leaving it alone here would
-     * mean the old flags silently outlive the toggle until the next full service restart, since
-     * coming back out of a visit reuses the existing window rather than rebuilding it.
+     * If they are visiting the box when the setting changes, the rebuilt windows are put back into
+     * that same hidden, stopped state instead of fading in over the app — leaving them alone here
+     * would mean the old flags silently outlive the toggle until the next full service restart,
+     * since coming back out of a visit reuses the existing windows rather than rebuilding them.
      */
     private fun recreateWindow() {
+        if (pets.isEmpty()) return
         val wasVisiting = isVisiting
-        if (root == null) return
-        // Mid-gesture bookkeeping tied to the window we're about to throw away.
-        handler.removeCallbacks(petRunnable)
-        pendingTapRunnable?.let { handler.removeCallbacks(it) }
-        pendingTapRunnable = null
-        dragging = false
-        pettingArmed = false
-        homing = false
-        routine = null
-
-        // Same hand-off the service already uses across a process restart: leave a position behind
-        // for the next attachGhost() to pick up, rather than threading it through as a spawn point.
-        Prefs.savePosition(this, posX, posY)
 
         stopLoop()
         handler.removeCallbacks(behaviourRunnable)
         handler.removeCallbacks(syncRunnable)
-        runCatching { unregisterReceiver(screenReceiver) }
-        prefsListener?.let { runCatching { Prefs.raw(this).unregisterOnSharedPreferenceChangeListener(it) } }
-        prefsListener = null
-        root?.let { view -> runCatching { windowManager.removeView(view) } }
-        root = null
-        ghost = null
-        // Stale relayout dedupe from the window we just tore down; force the first position after
-        // rebuild through rather than have it skipped as "no real movement".
-        lastAppliedX = Int.MIN_VALUE
-        lastAppliedY = Int.MIN_VALUE
+        // Same hand-off the service already uses across a process restart: each of them leaves a
+        // position behind for his own attach() to pick up, rather than threading it through as a
+        // spawn point.
+        for (p in pets) p.detach()
 
-        attachGhost()
+        clickThrough = Prefs.clickThrough(this)
+        for (p in pets) p.attach(spawn = null)
+
+        startLoop()
+        handler.postDelayed(behaviourRunnable, BEHAVIOUR_INTERVAL_MS)
+        handler.postDelayed(syncRunnable, FIRST_SYNC_DELAY_MS)
+
         if (wasVisiting) {
-            // attachGhost() always fades a fresh window in and starts the loop — undo both so the
-            // rebuilt window lands back in the same hidden, stopped state setVisiting(true) left it in.
-            root?.let { view ->
-                view.animate().cancel()
-                view.alpha = 0f
-                view.visibility = android.view.View.GONE
-            }
+            // attach() always fades a fresh window in and startLoop() sets it running — undo both
+            // so the rebuilt windows land back in the same hidden, stopped state setVisiting(true)
+            // left them in.
+            for (p in pets) p.hideForVisit()
             stopLoop()
-        }
-    }
-
-    /** Something the user did — the brain wants to know what happened last, and when. */
-    private fun noteInteraction(event: PetEvent) {
-        lastPetEvent = event
-        lastInteractionAt = System.currentTimeMillis()
-        ContentSync.recordEvent(this, event.id)
-    }
-
-    /** Feeding and napping happen in the app, not on the overlay; they arrive as pref changes. */
-    private fun noteEvent(key: String?) {
-        when (key) {
-            "fed_at" -> noteInteraction(PetEvent.FED)
-            "sleeping" -> if (Prefs.sleeping(this)) noteInteraction(PetEvent.NAPPED)
-        }
-    }
-
-    /**
-     * Ask the brain what he feels like doing. For now the decision is only reported — driving the
-     * animations from it is the next step, and belongs on the view side.
-     */
-    private fun proposeBehaviour() {
-        val brain = engine()
-        if (!brain.isLoaded) return
-        val view = ghost ?: return
-        val petContext = PetContext.of(this, lastPetEvent, lastInteractionAt)
-        val behaviour = brain.next(petContext, ContentSync.dailyBoosts(this)) ?: return
-        perform(behaviour, view)
-    }
-
-    /**
-     * Turn a decision into something you can see.
-     *
-     * The pack says what he feels and how he should move; this is the only place that knows how to
-     * express either. Nothing here overrides an act the user just took — a behaviour that arrives
-     * while he is being petted, eating or asleep is dropped, because his own moment beats the
-     * content pack's suggestion.
-     */
-    private fun perform(behaviour: Behaviour, view: GhostView) {
-        if (sleeping || petTriggered) return
-
-        behaviour.vocal?.let { view.showBubble(it, 1.9f) }
-
-        when (behaviour.emote) {
-            Emote.HAPPY -> {
-                view.showExpression(Expression.SMILE, 2.2f)
-                view.startWiggle()
-            }
-            Emote.AFFECTION -> {
-                view.showExpression(Expression.DELIGHTED, 2.4f)
-                view.spawnHeart()
-            }
-            Emote.SLEEPY -> view.showExpression(Expression.SLEEPY, 3.0f)
-            Emote.CURIOUS -> view.showExpression(Expression.CONFUSED, 2.2f)
-            Emote.SPOOKED -> view.spook()
-            Emote.MOODY -> view.spookLightly()
-            Emote.GOOFY -> view.setPuffTarget(0.30f * behaviour.intensity)
-            Emote.CONFIDENT -> view.setPuffTarget(0.10f * behaviour.intensity)
-            Emote.HUNGRY -> view.showExpression(Expression.CONFUSED, 1.6f)
-        }
-        if (behaviour.emote != Emote.GOOFY && behaviour.emote != Emote.CONFIDENT) {
-            view.setPuffTarget(0f)
-        }
-
-        // Locomotion is a nudge to the drift, never a teleport: he is a ghost, he glides.
-        val speed = driftSpeed * (0.6f + behaviour.intensity)
-        when (behaviour.locomotion) {
-            Locomotion.DRIFT -> driftAngle = Random.nextFloat() * 2f * PI.toFloat()
-            Locomotion.FLEE -> launch(angleTowardsOpenSpace())
-            Locomotion.APPROACH -> aimAt(usable.centerX().toFloat(), usable.centerY().toFloat(), speed * 2f)
-            Locomotion.PERCH_CORNER -> aimAt(nearestCornerX(), nearestCornerY(), speed * 1.6f)
-            Locomotion.ZOOMIES -> {
-                launch(Random.nextFloat() * 2f * PI.toFloat())
-                view.startWiggle()
-            }
-            Locomotion.STILL -> {
-                velX = 0f
-                velY = 0f
-            }
-            Locomotion.ROLLOVER, Locomotion.BOUNCE, Locomotion.ORBIT,
-            Locomotion.PACE, Locomotion.EDGE_SLIDE, Locomotion.PEEK ->
-                startRoutine(behaviour.locomotion, behaviour.intensity, speed, view)
-        }
-    }
-
-    /** Point him at a spot and give him just enough push to drift there. */
-    private fun aimAt(targetX: Float, targetY: Float, speed: Float) {
-        val cx = posX + windowPx / 2f
-        val cy = posY + headroomPx + windowPx / 2f
-        val angle = atan2(targetY - cy, targetX - cx)
-        driftAngle = angle
-        velX = cos(angle) * speed
-        velY = sin(angle) * speed
-        ghost?.setMotion(velX, velY)
-    }
-
-    private fun nearestCornerX(): Float =
-        if (posX + windowPx / 2f < usable.centerX()) usable.left + windowPx / 2f else usable.right - windowPx / 2f
-
-    // "Corner" now means the side of the screen at a comfortable height, not the actual corner:
-    // the real ones are in the band he stays out of.
-    private fun nearestCornerY(): Float =
-        (if (posY < usable.centerY()) usable.top + windowPx else usable.bottom - windowPx)
-            .toFloat()
-            .coerceIn(minY(), maxY())
-
-    /** Resizes and/or retints the live window in place when the Style tab changes, keeping him
-     *  centred at the same spot rather than snapping to a corner or flickering off and back on. */
-    private fun syncAppearance() {
-        val view = ghost ?: return
-
-        val newHue = Prefs.colorHue(this)
-        if (newHue != lastTintHue) {
-            lastTintHue = newHue
-            view.setTint(newHue)
-        }
-
-        val newSizeDp = Prefs.sizeDp(this)
-        if (newSizeDp != lastSizeDp) {
-            lastSizeDp = newSizeDp
-            val container = root ?: return
-            val newGhostPx = (newSizeDp * density).toInt()
-            val newWindowPx = newGhostPx + haloPx * 2
-            val delta = (newWindowPx - windowPx) / 2f
-            posX -= delta
-            posY -= delta
-            ghostPx = newGhostPx
-            windowPx = newWindowPx
-            headroomPx = GhostView.headroomPx(density, ghostPx)
-            haloPadPx = GhostView.haloPadPx(ghostPx)
-            // The side room follows his size now, so it has to be recomputed here too.
-            sidePx = GhostView.bubbleSidePx(density, ghostPx)
-            clampIntoBounds()
-            params.width = windowPx + sidePx * 2
-            params.height = windowPx + headroomPx + haloPadPx
-            params.x = posX.toInt() - sidePx
-            params.y = posY.toInt()
-            view.setBodySize(ghostPx)
-            view.layoutParams = FrameLayout.LayoutParams(
-                ghostPx + sidePx * 2,
-                ghostPx + headroomPx + haloPadPx,
-                android.view.Gravity.CENTER
-            )
-            runCatching { windowManager.updateViewLayout(container, params) }
-            lastAppliedX = params.x
-            lastAppliedY = params.y
-        }
-
-        val newShade = Prefs.shade(this)
-        if (newShade != lastShade) {
-            lastShade = newShade
-            ghost?.setShade(newShade)
-        }
-
-    }
-
-    /** Catches the stats and his mood up to now, pushes the result onto the view, and keeps the
-     *  notification honest about how he's doing. */
-    /**
-     * The faces that follow from the numbers: worn out enough to yawn, run right down to a swoon.
-     * Called from the same place the mood is refreshed, so it never fights it.
-     */
-    private fun expressionFor(snapshot: PetStats.Snapshot): Expression = when {
-        snapshot.sleeping -> Expression.NONE
-        snapshot.energy < 8f -> Expression.FAINT
-        snapshot.energy < 22f -> Expression.SLEEPY
-        snapshot.happiness > 92f && snapshot.hunger > 70f -> Expression.DELIGHTED
-        else -> Expression.NONE
-    }
-
-    private fun refreshMood() {
-        val s = Emotions.snapshot(this)
-        sleeping = s.body.sleeping
-        mood = s.mood
-        energyFull = s.body.energy >= ENERGY_FULL_THRESHOLD
-        ghost?.setMood(mood, sleeping)
-        // A face that follows from the numbers — only re-shown when it changes, so it does not
-        // restart itself every refresh.
-        val face = expressionFor(s.body)
-        if (face != lastExpression) {
-            lastExpression = face
-            if (face != Expression.NONE) ghost?.showExpression(face, 3.4f)
-        }
-
-        if (sleeping != notifiedSleeping || mood != notifiedMood) {
-            notifiedSleeping = sleeping
-            notifiedMood = mood
-            runCatching {
-                getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
-            }
-            runCatching { GhostlyWidgetProvider.refreshAll(this) }
         }
     }
 
@@ -1030,729 +2069,19 @@ class GhostOverlayService : Service() {
 
     // endregion
 
-    // region touch
-
-    private fun onGhostTouch(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
-            // Fires for every tap on screen while intangible. No coordinates — see the class doc.
-            noticeTap()
-            return false
-        }
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                dragging = false
-                downRawX = event.rawX
-                downRawY = event.rawY
-                downPosX = posX
-                downPosY = posY
-                downTime = SystemClock.uptimeMillis()
-                lastDragX = event.rawX
-                lastDragY = event.rawY
-                lastDragNanos = System.nanoTime()
-                velX = 0f
-                velY = 0f
-                val cx = posX + windowPx / 2f
-                val cy = posY + headroomPx + windowPx / 2f
-                ghost?.lookAt((event.rawX - cx) / (windowPx / 2f), (event.rawY - cy) / (windowPx / 2f))
-                petTriggered = false
-                pettingArmed = true
-                handler.postDelayed(petRunnable, PET_HOLD_MS)
-                return true
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                val dx = event.rawX - downRawX
-                val dy = event.rawY - downRawY
-                if (!dragging && hypot(dx, dy) > touchSlop) {
-                    dragging = true
-                    pettingArmed = false
-                    handler.removeCallbacks(petRunnable)
-                }
-                if (dragging) {
-                    posX = downPosX + dx
-                    posY = downPosY + dy
-                    clampIntoBounds()
-                    applyPosition()
-
-                    val now = System.nanoTime()
-                    val dt = ((now - lastDragNanos) / 1e9f).coerceAtLeast(0.004f)
-                    velX = (event.rawX - lastDragX) / dt
-                    velY = (event.rawY - lastDragY) / dt
-                    lastDragX = event.rawX
-                    lastDragY = event.rawY
-                    lastDragNanos = now
-                    ghost?.setMotion(velX * 0.35f, velY * 0.35f)
-                }
-                return true
-            }
-
-            MotionEvent.ACTION_UP -> {
-                handler.removeCallbacks(petRunnable)
-                pettingArmed = false
-                if (!dragging) {
-                    if (petTriggered) {
-                        // Already petted via the hold — nothing more to do on release.
-                    } else if (sleeping) {
-                        // Stirred, not startled: a poke while napping just wakes him.
-                        wakeUp()
-                    } else {
-                        val now = SystemClock.uptimeMillis()
-                        val isSecondTap = now - lastTapUpAt < DOUBLE_TAP_MS &&
-                            hypot(event.rawX - lastTapX, event.rawY - lastTapY) < touchSlop * 3
-                        if (isSecondTap) {
-                            // Caught the pending flee from the first tap in time — open the app
-                            // instead of letting him bolt.
-                            pendingTapRunnable?.let { handler.removeCallbacks(it) }
-                            pendingTapRunnable = null
-                            lastTapUpAt = 0L
-                            openApp()
-                        } else {
-                            lastTapUpAt = now
-                            lastTapX = event.rawX
-                            lastTapY = event.rawY
-                            val fx = event.rawX
-                            val fy = event.rawY
-                            val runnable = Runnable { fleeFrom(fx, fy) }
-                            pendingTapRunnable = runnable
-                            handler.postDelayed(runnable, DOUBLE_TAP_MS)
-                        }
-                    }
-                } else {
-                    // Released mid-drag: keep the throw, but keep it sane.
-                    val speed = hypot(velX, velY)
-                    val maxSpeed = 700f * density
-                    if (speed > maxSpeed) {
-                        velX = velX / speed * maxSpeed
-                        velY = velY / speed * maxSpeed
-                    }
-                    driftAngle = atan2(velY, velX)
-                    Prefs.savePosition(this, posX, posY)
-                }
-                dragging = false
-                return true
-            }
-
-            MotionEvent.ACTION_CANCEL -> {
-                handler.removeCallbacks(petRunnable)
-                pettingArmed = false
-                dragging = false
-                return true
-            }
-        }
-        return false
-    }
-
-    // endregion
-
-    // region motion
-
-    /** A hand strokes his head for a couple of seconds; still held after that, it happens again. */
-    private fun pet() {
-        noteInteraction(PetEvent.PETTED)
-        val now = SystemClock.uptimeMillis()
-        if (now - lastPetAt < PET_ANIMATION_MS) return
-        lastPetAt = now
-        val s = PetStats.snapshot(this)
-        val happiness = (s.happiness + 3f).coerceAtMost(PetStats.MAX)
-        Prefs.saveStats(this, s.hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
-        ghost?.startPetting()
-        // Still held: keep ticking affection for as long as the finger stays put.
-        handler.postDelayed(petRunnable, PET_ANIMATION_MS)
-    }
-
-    /** A poke while napping: stir awake with a small startle rather than a full bolt. */
-    private fun wakeUp() {
-        PetStats.wake(this)
-        sleeping = false
-        ghost?.setMood(mood, false)
-        ghost?.notice()
-        ghost?.spookLightly()
-    }
-
-    /** Dash off in a random direction, generally away from [fromX], [fromY]. */
-    private fun fleeFrom(fromX: Float, fromY: Float) {
-        noteInteraction(PetEvent.SPOOKED)
-        val cx = posX + windowPx / 2f
-        val cy = posY + headroomPx + windowPx / 2f
-        var dx = cx - fromX
-        var dy = cy - fromY
-        val len = hypot(dx, dy)
-        val baseAngle = if (len < 1f) {
-            Random.nextFloat() * 2f * PI.toFloat()
-        } else {
-            dx /= len
-            dy /= len
-            atan2(dy, dx)
-        }
-        // Away from the finger, but with a wide random spread so it never feels scripted.
-        launch(baseAngle + (Random.nextFloat() - 0.5f) * 1.9f)
-    }
-
-    private fun launch(angle: Float) {
-        // Ghostly, not startled-cat: he glides away rather than snapping across the screen. Angry,
-        // that glide gets a noticeably harder edge.
-        val angryBoost = if (mood == Mood.ANGRY) 1.5f else 1f
-        val speed = (320f + Random.nextFloat() * 260f) * density * angryBoost
-        velX = cos(angle) * speed
-        velY = sin(angle) * speed
-        driftAngle = angle
-        ghost?.spook()
-        ghost?.setMotion(velX, velY)
-        buzz()
-    }
+    // region shared odds and ends
 
     /**
-     * A tap landed somewhere on screen while he is intangible. He cannot know where, so he reacts
-     * to all of them — but he gets used to them: a burst of taps (you are typing) earns a longer
-     * cooldown and a smaller flinch than one deliberate poke out of the blue.
+     * The faces that follow from the numbers: worn out enough to yawn, run right down to a swoon.
+     * Called from the same place the mood is refreshed, so it never fights it.
      */
-    private fun noticeTap() {
-        if (sleeping) {
-            wakeUp()
-            return
-        }
-        val now = SystemClock.uptimeMillis()
-        while (recentTaps.isNotEmpty() && now - recentTaps.first() > 4_000) recentTaps.removeFirst()
-        recentTaps.addLast(now)
-        val burst = recentTaps.size
-
-        // He looks towards whatever seems to be going on: a flurry of taps is almost always the
-        // keyboard, so he watches the bottom of the screen; a lone tap just makes him glance about.
-        if (burst >= 3) {
-            lookAtScreen(bounds.width() * 0.5f, bounds.height() * 0.86f)
-        } else {
-            lookAtScreen(
-                bounds.width() * (0.2f + Random.nextFloat() * 0.6f),
-                bounds.height() * (0.3f + Random.nextFloat() * 0.5f)
-            )
-        }
-        nextGlanceAt = clock + 1.6f
-
-        // Angry, he's a good deal less patient with commotion — shorter fuse, bigger flinch.
-        val angry = mood == Mood.ANGRY
-        val cooldown = when {
-            burst >= 6 -> 2_600L   // busy screen: he settles down and mostly just watches
-            burst >= 3 -> 1_100L
-            else -> 320L
-        } / (if (angry) 2 else 1)
-        val view = ghost ?: return
-        if (now - lastReactionAt < cooldown) {
-            view.notice()
-            return
-        }
-        lastReactionAt = now
-
-        // Drift away from the commotion. Direction is random — with a lean towards open screen, so
-        // he does not spend his life pinned against an edge.
-        val angle = angleTowardsOpenSpace()
-        val impulse = (if (burst >= 3) 90f else 190f + Random.nextFloat() * 120f) * density * (if (angry) 1.4f else 1f)
-        velX += cos(angle) * impulse
-        velY += sin(angle) * impulse
-        driftAngle = angle
-        view.notice()
-        if (burst < 3) buzz()
+    private fun expressionFor(snapshot: PetStats.Snapshot): Expression = when {
+        snapshot.sleeping -> Expression.NONE
+        snapshot.energy < 8f -> Expression.FAINT
+        snapshot.energy < 22f -> Expression.SLEEPY
+        snapshot.happiness > 92f && snapshot.hunger > 70f -> Expression.DELIGHTED
+        else -> Expression.NONE
     }
-
-    /** A heading that generally points back into the middle of the screen, plus a wide spread. */
-    private fun angleTowardsOpenSpace(): Float {
-        val cx = posX + windowPx / 2f
-        val cy = posY + headroomPx + windowPx / 2f
-        val toCentre = atan2(bounds.height() / 2f - cy, bounds.width() / 2f - cx)
-        return toCentre + (Random.nextFloat() - 0.5f) * 3.0f
-    }
-
-    /** Point his eyes at a spot on the screen. */
-    private fun lookAtScreen(x: Float, y: Float) {
-        gazeScreenX = x
-        gazeScreenY = y
-    }
-
-    private fun updateGaze(dt: Float) {
-        val view = ghost ?: return
-        val speed = hypot(velX, velY)
-
-        // Gliding fast? He watches where he is going. Otherwise he looks around the room.
-        if (speed > 90f * density) {
-            view.lookAt(velX / speed, velY / speed)
-            nextGlanceAt = clock + 0.8f
-            return
-        }
-
-        if (clock > nextGlanceAt) {
-            lookAtScreen(
-                bounds.width() * (0.08f + Random.nextFloat() * 0.84f),
-                bounds.height() * (0.08f + Random.nextFloat() * 0.84f)
-            )
-            nextGlanceAt = clock + 1.4f + Random.nextFloat() * 2.6f
-        }
-
-        val cx = posX + windowPx / 2f
-        val cy = posY + headroomPx + windowPx / 2f
-        val dx = gazeScreenX - cx
-        val dy = gazeScreenY - cy
-        val len = hypot(dx, dy)
-        if (len < 1f) return
-        // Normalised direction; anything more than a screen-quarter away is a full-strength look.
-        val reach = (len / (bounds.width() * 0.25f)).coerceAtMost(1f)
-        view.lookAt(dx / len * reach, dy / len * reach)
-    }
-
-    private fun tick(dt: Float) {
-        val view = ghost ?: return
-        if (dragging) return
-
-        if (clock > nextStatsTickAt) {
-            nextStatsTickAt = clock + 10f
-            refreshMood()
-        }
-
-        if (homing) {
-            tickHoming(dt)
-            return
-        }
-
-        if (routine != null) {
-            tickRoutine(dt)
-            return
-        }
-
-        if (sleeping) {
-            // Settle to a stop and stay put rather than drifting off mid-nap.
-            val settle = 1f - exp(-2.5f * dt)
-            velX -= velX * settle
-            velY -= velY * settle
-            posX += velX * dt
-            posY += velY * dt
-            clampIntoBounds()
-            view.setMotion(velX, velY)
-            applyPosition()
-            return
-        }
-
-        updateGaze(dt)
-
-        if (clock > nextFlourishAt) {
-            nextFlourishAt = clock + 25f + Random.nextFloat() * 25f
-            runFlourish()
-        }
-
-        if (clock < goofyUntil) {
-            // Puffed up, floating and holding in a corner rather than the usual drift.
-            val settle = 1f - exp(-1.6f * dt)
-            velX += ((goofyCornerX - posX) * 1.4f - velX) * settle
-            velY += ((goofyCornerY - posY) * 1.4f - velY) * settle
-            posX += velX * dt
-            posY += velY * dt
-            clampIntoBounds()
-            view.setMotion(velX, velY)
-            applyPosition()
-            return
-        }
-        view.setPuffTarget(if (energyFull) 0.1f else 0f)
-        if (clock > nextGoofyCheckAt) {
-            nextGoofyCheckAt = clock + 45f + Random.nextFloat() * 40f
-            triggerGoofy()
-        }
-
-        // He is never quite still: the heading wanders, and the speed always settles back to a slow
-        // float rather than to zero. Angry, that float turns into a restless, erratic pace — he's
-        // not going anywhere, but he's clearly not settled either. Brimming with energy, the float
-        // turns quicker and more purposeful instead.
-        val angryJitter = if (mood == Mood.ANGRY) 2.6f else 1f
-        val angrySpeed = if (mood == Mood.ANGRY) 1.6f else if (energyFull) 1.3f else 1f
-        driftAngle += (sin(clock * 0.31f) + sin(clock * 0.17f + 1.3f)) * 0.4f * angryJitter * dt
-        val targetX = cos(driftAngle) * driftSpeed * angrySpeed
-        val targetY = sin(driftAngle) * driftSpeed * angrySpeed
-        // A pull back up out of the bottom of the screen, cubed so it is nothing in the middle and
-        // firm by the time he is down near the gesture bar. Downward only: the top of the screen is
-        // his to use, and pulling him off it was why he never seemed to reach the bar up there.
-        val bandMid = (minY() + maxY()) / 2f
-        val bandHalf = ((maxY() - minY()) / 2f).coerceAtLeast(1f)
-        val strayed = ((posY - bandMid) / bandHalf).coerceIn(0f, 1f)
-        val recentre = -(strayed * strayed * strayed) * driftSpeed * 0.9f
-
-        val settle = 1f - exp(-0.85f * dt)
-        velX += (targetX - velX) * settle
-        velY += (targetY + recentre - velY) * settle
-
-        posX += velX * dt
-        posY += velY * dt
-
-        // Bounce off the screen edges, losing a bit of energy each time.
-        if (posX < minX()) {
-            posX = minX(); bounceHorizontally()
-        } else if (posX > maxX()) {
-            posX = maxX(); bounceHorizontally()
-        }
-        if (posY < minY()) {
-            posY = minY(); bounceVertically()
-        } else if (posY > maxY()) {
-            posY = maxY(); bounceVertically()
-        }
-
-        view.setMotion(velX, velY)
-        applyPosition()
-    }
-
-    /** A hungry buzz + species call, or — when he's doing well — a happy little vocalisation. */
-    private fun runFlourish() {
-        val view = ghost ?: return
-        val s = Emotions.snapshot(this)
-        val species = Prefs.species(this)
-        when {
-            s.body.hunger <= PetStats.HUNGRY_THRESHOLD -> {
-                buzz()
-                view.showBubble(species.callHungry)
-            }
-            mood == Mood.CONTENT && s.body.happiness >= 70f -> {
-                view.showBubble(species.callHappy)
-                // Half the time he shimmies about it as well, so a good mood doesn't always look
-                // like exactly the same two seconds.
-                if (Random.nextBoolean()) view.startWiggle()
-            }
-        }
-    }
-
-    /** Puffs him up and picks a screen corner to float over to and hold in for a few seconds. */
-    private fun triggerGoofy() {
-        if (sleeping || mood != Mood.CONTENT) return
-        goofyUntil = clock + 4.5f
-        goofyCornerX = if (Random.nextBoolean()) minX() else maxX()
-        goofyCornerY = if (Random.nextBoolean()) minY() else maxY()
-        ghost?.setPuffTarget(0.32f)
-    }
-
-    /**
-     * The flight home. He eases towards the point the app named and stops there, and nothing else —
-     * drift, flourishes, the behaviour engine — gets a say until he lands. [arrivedHome] is what
-     * the app waits on before it takes him over, so the hand-off happens with him already in place.
-     */
-    /**
-     * Starts one of the set-piece movements. Each is given a few seconds, an anchor at wherever he
-     * is standing, and then runs itself in [tickRoutine] until its time is up.
-     */
-    /**
-     * Nothing should hold him against the side of the screen for long — not a set piece that ran
-     * out of room, not a launch that spent itself into a corner, not a target that happened to sit
-     * on the edge. If he is still there after a second and a bit, he peels off and does something
-     * else.
-     */
-    private fun watchForPinning() {
-        if (dragging || homing || sleeping) {
-            pinnedSince = 0f
-            return
-        }
-        if (!atEdge()) {
-            pinnedSince = 0f
-            return
-        }
-        if (pinnedSince == 0f) {
-            pinnedSince = clock
-            return
-        }
-        if (clock - pinnedSince < PINNED_SECONDS) return
-        pinnedSince = 0f
-        val view = ghost ?: return
-        // Away from whichever wall he is on, then on with something new.
-        val awayX = when {
-            posX <= minX() + 1f -> 1f
-            posX >= maxX() - 1f -> -1f
-            else -> 0f
-        }
-        val awayY = when {
-            posY <= minY() + 1f -> 1f
-            posY >= maxY() - 1f -> -1f
-            else -> 0f
-        }
-        driftAngle = atan2(
-            if (awayY == 0f) (Random.nextFloat() - 0.5f) else awayY,
-            if (awayX == 0f) (Random.nextFloat() - 0.5f) else awayX
-        )
-        velX = cos(driftAngle) * driftSpeed * 1.4f
-        velY = sin(driftAngle) * driftSpeed * 1.4f
-        routine = null
-        if (Random.nextFloat() < 0.4f) {
-            startRoutine(EDGE_RECOVERY_MOVES.random(), 0.6f, driftSpeed * 1.5f, view)
-        }
-    }
-
-    private fun startRoutine(kind: Locomotion, intensity: Float, speed: Float, view: GhostView) {
-        routine = kind
-        routineAnchorX = posX
-        routineAnchorY = posY
-        routineDir = if (Random.nextBoolean()) 1f else -1f
-        routineSpeed = speed
-        velX = 0f
-        velY = 0f
-        when (kind) {
-            Locomotion.ROLLOVER -> {
-                val seconds = 1.5f + intensity * 1.2f
-                routineUntil = clock + seconds
-                // Tips over as he drifts: the sideways glide is what stops it reading as a spin.
-                velX = routineDir * speed * 1.4f
-                velY = -speed * 0.25f
-                view.startRoll(seconds, if (intensity > 0.8f) 2f else 1f)
-            }
-            Locomotion.BOUNCE -> {
-                routineUntil = clock + 3.4f
-                velX = routineDir * speed * 0.9f
-                velY = -speed * 3.2f
-            }
-            Locomotion.ORBIT -> {
-                routineUntil = clock + 3.2f + intensity * 2f
-                // Anchored on the middle of the loop, not on him, so he circles something.
-                val radius = minOf(usable.width(), usable.height()) * 0.16f
-                routineAngle = Random.nextFloat() * 2f * PI.toFloat()
-                routineAnchorX = posX - cos(routineAngle) * radius
-                routineAnchorY = posY - sin(routineAngle) * radius
-                routineSpeed = radius
-            }
-            Locomotion.PACE -> {
-                routineUntil = clock + 4f
-                routineSpeed = minOf(usable.width() * 0.22f, ghostPx * 3.2f)
-                velX = routineDir * speed * 1.6f
-            }
-            Locomotion.EDGE_SLIDE -> {
-                routineUntil = clock + 3.6f
-                routineAnchorX = if (posX + windowPx / 2f < usable.centerX()) minX() else maxX()
-                velY = routineDir * speed * 1.5f
-            }
-            Locomotion.PEEK -> {
-                routineUntil = clock + 3.8f
-                // Off the near edge by most of himself, so only a sliver of him is left showing.
-                val leaving = posX + windowPx / 2f < usable.centerX()
-                routineAnchorX = if (leaving) minX() - ghostPx * 0.62f else maxX() + ghostPx * 0.62f
-                routineDir = if (leaving) -1f else 1f
-            }
-            else -> routine = null
-        }
-    }
-
-    /**
-     * Runs whichever set piece is active. Each one steers him directly rather than nudging his
-     * drift, and when its time is up he is handed back to the ordinary wander.
-     */
-    private fun tickRoutine(dt: Float) {
-        val view = ghost ?: return
-        val kind = routine ?: return
-        if (clock > routineUntil) {
-            routine = null
-            driftAngle = atan2(velY, velX)
-            return
-        }
-        val settle = 1f - exp(-4f * dt)
-        when (kind) {
-            Locomotion.BOUNCE -> {
-                velY += 1_500f * density * dt
-                posX += velX * dt
-                posY += velY * dt
-                if (posY >= maxY()) {
-                    posY = maxY()
-                    // Each landing takes a bite out of the bounce, so it dies down rather than
-                    // going forever, and he squashes on impact.
-                    velY = -velY * 0.62f
-                    if (abs(velY) < 60f * density) {
-                        velY = 0f
-                        routineUntil = clock
-                    } else {
-                        view.squash(minOf(1.2f, abs(velY) / (600f * density)))
-                        buzz()
-                    }
-                }
-            }
-            Locomotion.ORBIT -> {
-                routineAngle += dt * (1.6f + routineSpeed / (240f * density))
-                val nx = routineAnchorX + cos(routineAngle) * routineSpeed
-                val ny = routineAnchorY + sin(routineAngle) * routineSpeed
-                velX = (nx - posX) / dt.coerceAtLeast(0.001f)
-                velY = (ny - posY) / dt.coerceAtLeast(0.001f)
-                posX = nx
-                posY = ny
-            }
-            Locomotion.PACE -> {
-                posX += velX * dt
-                if (abs(posX - routineAnchorX) > routineSpeed) {
-                    velX = -velX
-                    posX = routineAnchorX + routineSpeed * (if (posX > routineAnchorX) 1f else -1f)
-                    view.lookAt(if (velX > 0f) 1f else -1f, 0f)
-                }
-            }
-            Locomotion.EDGE_SLIDE -> {
-                velX += ((routineAnchorX - posX) * 3.4f - velX) * settle
-                posX += velX * dt
-                posY += velY * dt
-                if (posY <= minY() || posY >= maxY()) velY = -velY
-            }
-            Locomotion.PEEK -> {
-                // Out for the first half, leaning back in for the second.
-                val goingOut = clock < routineUntil - 1.6f
-                val targetX = if (goingOut) routineAnchorX else routineAnchorX - routineDir * ghostPx * 1.4f
-                velX += ((targetX - posX) * 3.2f - velX) * settle
-                posX += velX * dt
-                view.lookAt(-routineDir, 0f)
-            }
-            Locomotion.ROLLOVER -> {
-                posX += velX * dt
-                posY += velY * dt
-                velY += 40f * density * dt
-            }
-            else -> Unit
-        }
-        // Peek and the bounce's floor are *meant* to press against an edge; everything else that
-        // reaches one has run out of room, and grinding along the wall until its few seconds are up
-        // is the one thing that makes him look like a bug rather than a pet.
-        val pressing = kind != Locomotion.PEEK
-        val hitX = pressing && (posX < minX() || posX > maxX())
-        val hitY = pressing && kind != Locomotion.BOUNCE && (posY < minY() || posY > maxY())
-        clampIntoBounds()
-        if (hitX || hitY) {
-            if (hitX) velX = -abs(velX) * sign(if (posX <= minX()) 1f else -1f)
-            if (hitY) velY = -abs(velY) * sign(if (posY <= minY()) 1f else -1f)
-            hitEdgeMidMovement(view)
-            return
-        }
-        view.setMotion(velX, velY)
-        applyPosition()
-    }
-
-    /**
-     * He has run into the side of the screen partway through doing something. Rather than pressing
-     * on into it for the rest of the routine, he turns away — and half the time changes his mind
-     * about what he was doing altogether and starts something else.
-     */
-    private fun hitEdgeMidMovement(view: GhostView) {
-        routine = null
-        driftAngle = atan2(velY, velX)
-        ghost?.spookLightly()
-        if (Random.nextFloat() < 0.5f) {
-            val next = EDGE_RECOVERY_MOVES.random()
-            startRoutine(next, 0.6f, driftSpeed * (1.2f + Random.nextFloat()), view)
-        }
-        view.setMotion(velX, velY)
-        applyPosition()
-    }
-
-    private fun tickHoming(dt: Float) {
-        val view = ghost ?: return
-        val dx = homingToX - posX
-        val dy = homingToY - posY
-        val dist = hypot(dx, dy)
-        if (dist < 4f || clock > homingUntil) {
-            posX = homingToX
-            posY = homingToY
-            velX = 0f
-            velY = 0f
-            view.setMotion(0f, 0f)
-            applyPosition(force = true)
-            homing = false
-            arrivedHome = true
-            return
-        }
-        // Fast, but eased, so he arrives settling rather than slamming into place.
-        val speed = (dist * 4.5f).coerceIn(driftSpeed * 6f, driftSpeed * 34f)
-        val settle = 1f - exp(-9f * dt)
-        velX += (dx / dist * speed - velX) * settle
-        velY += (dy / dist * speed - velY) * settle
-        posX += velX * dt
-        posY += velY * dt
-        view.setMotion(velX, velY)
-        view.lookAt(dx / dist, dy / dist)
-        applyPosition()
-    }
-
-    private fun bounceHorizontally() {
-        velX = -velX * 0.5f
-        driftAngle = PI.toFloat() - driftAngle
-        ghost?.spookLightly()
-    }
-
-    private fun bounceVertically() {
-        velY = -velY * 0.5f
-        driftAngle = -driftAngle
-        ghost?.spookLightly()
-    }
-
-    // The ghost — not the window's transparent halo — is what has to stay on screen.
-    // A sliver of overhang still looks good — he nuzzles the edge — but never enough to hide him
-    // behind a system bar.
-    private fun overhang() = ghostPx * 0.05f
-
-    /**
-     * The strip of screen he is allowed in. At the top he may go right up to the system bar — there
-     * is nothing up there he gets in the way of. At the bottom he stops [BAND_MARGIN] short, which
-     * keeps him off the gesture bar and off whatever an app puts along its own bottom edge.
-     * Enforced through [minY]/[maxY], so drift, perching, bouncing and every set piece inherit it
-     * rather than each having to remember.
-     */
-    // The very top of the display, not the top of the *usable* area: the usable rect starts below
-    // the status bar, which left him stopping a bar's height short of where he should be able to go.
-    private fun bandTop(): Float = bounds.top.toFloat()
-
-    private fun bandBottom(): Float =
-        minOf(usable.bottom.toFloat(), bounds.height() * (1f - BAND_MARGIN))
-
-    private fun minX() = usable.left - haloPx - overhang()
-    private fun maxX() = usable.right - windowPx + haloPx + overhang()
-    // His body starts headroomPx below the top of the window, so the vertical bounds shift by it:
-    // he may sit at the very top of the screen with the bubble space hanging off-screen above.
-    private fun minY() = bandTop() - haloPx - headroomPx
-    // The window is windowPx + headroomPx tall and his body sits in the BOTTOM of it, so the floor
-    // has to come up by the headroom as well — without this he sinks below the navigation bar by
-    // exactly the height of his own speech bubble.
-    private fun maxY() = bandBottom() - headroomPx - windowPx + haloPx
-
-    /** Against any wall right now, near enough. */
-    private fun atEdge(): Boolean =
-        posX <= minX() + 1f || posX >= maxX() - 1f || posY <= minY() + 1f || posY >= maxY() - 1f
-
-    private fun clampIntoBounds() {
-        posX = posX.coerceIn(minX(), maxX())
-        posY = posY.coerceIn(minY(), maxY())
-        keepOutOfCorners()
-    }
-
-    /**
-     * Never in the very corner of the screen. Phone screens are rounded there, so a ghost in a
-     * corner is a ghost with a bite taken out of him — and the top corners are where the clock and
-     * the status icons live. He is slid along whichever edge he is on until he is clear of it.
-     */
-    private fun keepOutOfCorners() {
-        val pad = CORNER_KEEPOUT_DP * density
-        val nearSide = posX <= minX() + pad || posX >= maxX() - pad
-        if (!nearSide) return
-        if (posY <= minY() + pad) posY = minY() + pad
-        else if (posY >= maxY() - pad) posY = maxY() - pad
-    }
-
-    private var lastAppliedX = Int.MIN_VALUE
-    private var lastAppliedY = Int.MIN_VALUE
-
-    /** Smallest movement worth a window relayout — a dp, not a pixel. */
-    private var moveThresholdPx = 1
-
-    /**
-     * [force] skips the movement threshold. Used where the exact pixel matters rather than the
-     * saved relayout: landing at the end of a flight home, where the box is about to fade in on
-     * the precise point he was sent to and a leftover dp of slack shows up as a jump.
-     */
-    private fun applyPosition(force: Boolean = false) {
-        val view = root ?: return
-        val nx = posX.toInt()
-        val ny = posY.toInt()
-        // Moving the window is a system relayout and recomposite — by far the most expensive thing
-        // done per frame. A single pixel of drift is not worth one, and at this speed the old
-        // pixel-exact test let almost every frame through.
-        if (!force && abs(nx - lastAppliedX) < moveThresholdPx && abs(ny - lastAppliedY) < moveThresholdPx) return
-        lastAppliedX = nx
-        lastAppliedY = ny
-        params.x = nx - sidePx
-        params.y = ny
-        bodyX = posX
-        bodyY = posY + headroomPx
-        runCatching { windowManager.updateViewLayout(view, params) }
-    }
-
-    // endregion
 
     private fun buzz() {
         if (!Prefs.hapticsEnabled(this)) return
@@ -1767,6 +2096,13 @@ class GhostOverlayService : Service() {
         val intent = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         startActivity(intent)
+    }
+
+    private fun refreshNotification() {
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                ?.notify(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -1794,13 +2130,23 @@ class GhostOverlayService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val name = Prefs.displayName(this)
+        // One notification, and it speaks for the primary — he is the one the box hands back and
+        // forth and the one every install has. On a cold start it is built before any window is up,
+        // which is the null case: a name from prefs and a content mood, corrected by the first
+        // refreshMood() a moment later.
+        val lead = primary()
+        val name = lead?.pet?.displayName ?: Prefs.displayName(this)
+        val asleep = lead?.sleeping ?: false
+        val feeling = lead?.mood ?: Mood.CONTENT
+
         // Both of these used to talk about tapping him. Taps go straight through him now — the
         // app's box is the only place he can be handled — so the notification says so.
         val (title, text) = when {
-            sleeping -> "$name is napping" to "Open Ghostly to wake him, or Stop to send him away."
-            mood == Mood.ANGRY -> "$name is upset with you" to "He's been neglected too long — a gift would help."
-            mood == Mood.SAD -> "$name is floating" to "He's a little down today. Open Ghostly and say hello."
+            asleep -> "$name is napping" to "Open Ghostly to wake him, or Stop to send him away."
+            feeling == Mood.ANGRY ->
+                "$name is upset with you" to "He's been neglected too long — a gift would help."
+            feeling == Mood.SAD ->
+                "$name is floating" to "He's a little down today. Open Ghostly and say hello."
             else -> "$name is floating" to "Drifting over your apps. Stop to send him home."
         }
 
@@ -1813,4 +2159,6 @@ class GhostOverlayService : Service() {
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .build()
     }
+
+    // endregion
 }

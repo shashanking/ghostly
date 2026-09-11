@@ -16,8 +16,24 @@ import kotlin.random.Random
  *
  * With no pack loaded this returns null and the caller keeps him drifting — the pack is content,
  * never a dependency.
+ *
+ * ### One brain each, one pack between them
+ *
+ * [lastFiredAt] and [recent] are what those two rules are made of, and they are per instance on
+ * purpose: they are this pet's memory of what *he* just did. Sharing one engine across a roster
+ * would have the first pet's cooldowns silencing the second, so five pets would look like one pet
+ * with a stutter — the exact opposite of what having five is for.
+ *
+ * The [pack] is the other way round. It is immutable once parsed and it is a quarter of a megabyte
+ * of JSON, so it is loaded once for the process and every engine reads the same copy. Build engines
+ * through [forPets] (or [forPet]) rather than the constructor to get that for free.
  */
-class BehaviourEngine(private val pack: BehaviourPack?) {
+class BehaviourEngine(
+    private val pack: BehaviourPack?,
+    /** Whose brain this is. Not used in picking — it is here so a mismatched engine and
+     *  [PetContext] are visible to a reader (and a log line) instead of silently plausible. */
+    val slot: Int = PetStore.PRIMARY_SLOT,
+) {
 
     private val lastFiredAt = HashMap<String, Long>()
 
@@ -100,7 +116,53 @@ class BehaviourEngine(private val pack: BehaviourPack?) {
     companion object {
         private const val RECENT_MEMORY = 12
 
-        fun fromAssets(context: Context): BehaviourEngine =
-            BehaviourEngine(BehaviourPack.load(context))
+        /** The one parsed pack the process shares, and the version it was parsed from. */
+        @Volatile
+        private var cachedPack: BehaviourPack? = null
+
+        @Volatile
+        private var cachedVersion = -1
+
+        private val packLock = Any()
+
+        /**
+         * The pack, parsed at most once per version.
+         *
+         * [BehaviourPack.load] opens and fully parses up to two copies of the content — the bundled
+         * one and anything downloaded since — which is far too much to do once per pet per rebuild.
+         * The cache key is [BehaviourPack.loadedVersion], deliberately the same one
+         * [GhostOverlayService] already uses to decide its engine is stale, so a pack downloaded by
+         * [ContentSync] still takes effect exactly when it did before, and never later.
+         *
+         * A failed load is not cached: [cachedVersion] only moves on success, so a pack that was
+         * missing or malformed is retried on the next ask rather than leaving him drifting for the
+         * life of the process.
+         */
+        fun pack(context: Context): BehaviourPack? {
+            val version = BehaviourPack.loadedVersion(context)
+            cachedPack?.let { if (version == cachedVersion) return it }
+            return synchronized(packLock) {
+                val cached = cachedPack
+                if (cached != null && version == cachedVersion) {
+                    cached
+                } else {
+                    BehaviourPack.load(context)?.also {
+                        cachedPack = it
+                        cachedVersion = version
+                    }
+                }
+            }
+        }
+
+        /** A brain of his own for every pet in [slots], all reading one shared pack. */
+        fun forPets(context: Context, slots: List<Int>): Map<Int, BehaviourEngine> {
+            val loaded = pack(context)
+            return slots.associateWith { BehaviourEngine(loaded, it) }
+        }
+
+        fun forPet(context: Context, slot: Int = PetStore.PRIMARY_SLOT): BehaviourEngine =
+            BehaviourEngine(pack(context), slot)
+
+        fun fromAssets(context: Context): BehaviourEngine = forPet(context)
     }
 }

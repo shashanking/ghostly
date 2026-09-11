@@ -22,6 +22,7 @@ class BehaviourEngineTest {
         happiness: Float = 70f,
         anger: Float = 0f,
         sleeping: Boolean = false,
+        slot: Int = PetStore.PRIMARY_SLOT,
     ) = PetContext(
         species = species,
         timeOfDay = timeOfDay,
@@ -40,6 +41,15 @@ class BehaviourEngineTest {
         unlocksToday = 5,
         minutesSinceInteraction = 10,
         lastEvent = null,
+        slot = slot,
+    )
+
+    /** A pack with exactly one reaction, eligible in any situation, whose cooldown is long enough
+     *  that firing it once takes it out of the running for the rest of a test. */
+    private fun oneShotPack(): BehaviourPack = BehaviourPack.parse(
+        JSONObject(
+            """{"reactions":[{"id":"only","emote":"happy","locomotion":"drift","weight":10,"cooldownSec":3600}]}"""
+        )
     )
 
     @Test
@@ -89,6 +99,31 @@ class BehaviourEngineTest {
             val max = ids.getValue(chosen.id).conditions.maxHunger
             assertTrue("${chosen.id} needs hunger <= $max but hunger was 100", max == null || max >= 100f)
         }
+    }
+
+    @Test
+    fun `a pet's cooldowns are his own, not the roster's`() {
+        // The whole reason a roster gets one engine each over one shared pack: with a single engine
+        // between them, the first pet to use a reaction would put it on cooldown for all of them,
+        // and five pets would behave like one pet with a stutter.
+        val pack = oneShotPack()
+        val first = BehaviourEngine(pack, PetStore.PRIMARY_SLOT)
+        val second = BehaviourEngine(pack, 2)
+
+        assertNotNull(first.next(context(), now = 0L))
+        assertNull("his own cooldown did not hold", first.next(context(), now = 1_000L))
+        assertNotNull(
+            "one pet's cooldown silenced another",
+            second.next(context(slot = 2), now = 1_000L),
+        )
+    }
+
+    @Test
+    fun `an engine with no slot given belongs to the pet every install already has`() {
+        // Both defaults matter: every call site that predates the roster keeps building a brain
+        // and a context for the primary, with no change and nothing to update.
+        assertEquals(PetStore.PRIMARY_SLOT, BehaviourEngine(oneShotPack()).slot)
+        assertEquals(PetStore.PRIMARY_SLOT, context().slot)
     }
 
     @Test

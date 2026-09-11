@@ -50,30 +50,60 @@ object GhostlyApi {
 
     // ---- pet ----------------------------------------------------------------------------------
 
-    /** Make sure the server knows this pet; returns its server id. */
-    fun ensurePet(context: Context): String? {
-        Prefs.petServerId(context)?.let { return it }
+    /**
+     * One pet as the server has him — what [listPets] hands back.
+     *
+     * This is not a [Pet]: it carries his stats, which a [Pet] deliberately does not, because here
+     * they arrive in the same response and there is nothing yet to write them into.
+     */
+    data class RemotePet(
+        val id: String,
+        val slot: Int,
+        val species: Species,
+        val name: String?,
+        /** 0 for a slot that never expires — the primary's, and anything created before leases. */
+        val leaseExpiresAt: Long,
+        val stats: PetStats.Snapshot,
+        val anger: Float,
+        val sleepStartedAt: Long,
+        val updatedAt: Long,
+    )
+
+    /**
+     * Make sure the server knows this pet; returns its server id.
+     *
+     * The id is cached per slot ([Prefs.petServerId]), so each pet is created once and every later
+     * call for him is a cache hit. Defaulting [pet] to the primary keeps every existing caller —
+     * all of which mean "the only pet there is" — doing exactly what it did.
+     */
+    fun ensurePet(context: Context, pet: Pet = PetStore.primary(context)): String? {
+        Prefs.petServerId(context, pet.slot)?.let { return it }
         if (!hasSession(context)) return null
-        val stats = PetStats.snapshot(context)
         val body = JSONObject()
-            .put("slot", 1)
-            .put("species", Prefs.species(context).id)
-            .put("name", Prefs.name(context) ?: JSONObject.NULL)
-            .put("state", stateJson(context, stats))
+            .put("slot", pet.slot)
+            .put("species", pet.species.id)
+            .put("name", pet.name ?: JSONObject.NULL)
+            .put("leaseExpiresAt", leaseJson(context, pet))
+            .put("state", stateJson(context, pet, PetStats.snapshot(context, slot = pet.slot)))
         val res = call(context, "POST", "/pets", body)
         val id = res.optString("id").takeIf { it.isNotBlank() } ?: return null
-        Prefs.savePetServerId(context, id)
+        Prefs.savePetServerId(context, id, pet.slot)
         return id
     }
 
     /**
-     * Push local stats. If the server's copy is newer it wins and is written back locally — that is
-     * how a second device, or a reinstall, picks the pet up where he actually is.
+     * Push one pet's stats. If the server's copy is newer it wins and is written back locally —
+     * that is how a second device, or a reinstall, picks the pet up where he actually is.
      */
-    fun syncState(context: Context): Boolean {
-        val petId = ensurePet(context) ?: return false
-        val stats = PetStats.snapshot(context)
-        val res = call(context, "PUT", "/pets/$petId/state", stateJson(context, stats))
+    fun syncState(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Boolean {
+        // read, not get: a pet whose lease lapsed mid-sync still has stats worth pushing, and
+        // losing them because a clock ran over would be exactly the deletion leases avoid.
+        val pet = PetStore.read(context, slot)
+        val petId = ensurePet(context, pet) ?: return false
+        // Neutral personality on purpose: this is the raw catch-up, the same one this call has
+        // always pushed. Which species drains how fast is [Emotions]' layer, above this one.
+        val stats = PetStats.snapshot(context, slot = slot)
+        val res = call(context, "PUT", "/pets/$petId/state", stateJson(context, pet, stats))
         val state = res.optJSONObject("state") ?: return false
         if (!res.optBoolean("accepted", true)) {
             Prefs.saveStats(
@@ -82,27 +112,81 @@ object GhostlyApi {
                 state.optDouble("energy", stats.energy.toDouble()).toFloat(),
                 state.optDouble("happiness", stats.happiness.toDouble()).toFloat(),
                 state.optBoolean("sleeping", stats.sleeping),
-                state.optLong("updatedAt", System.currentTimeMillis())
+                state.optLong("updatedAt", System.currentTimeMillis()),
+                slot,
             )
+            // Anger was sent on every push and thrown away on every reply, so a pet who was wound
+            // up on another device arrived home calm. It lives outside [Prefs.saveStats] because
+            // it decays on its own schedule — see [Emotions] — so it is written on its own.
+            Prefs.saveAnger(context, state.optDouble("anger", Prefs.anger(context, slot).toDouble()).toFloat(), slot)
         }
         return true
     }
 
-    fun postEvents(context: Context, events: JSONArray): Boolean {
+    fun postEvents(context: Context, events: JSONArray, slot: Int = PetStore.PRIMARY_SLOT): Boolean {
         if (events.length() == 0) return true
-        val petId = ensurePet(context) ?: return false
+        val petId = ensurePet(context, PetStore.read(context, slot)) ?: return false
         val res = call(context, "POST", "/pets/$petId/events", events)
         return res.has("inserted")
     }
 
-    private fun stateJson(context: Context, s: PetStats.Snapshot) = JSONObject()
+    /**
+     * Every pet the account has on the server, lapsed leases included — the missing half of
+     * "restore onto a new device", which has no path today.
+     *
+     * Nothing calls this yet. It is here so the wire side is settled while the shapes are fresh;
+     * the decision about what a restore does with a lapsed lease belongs with the UI that shows it.
+     */
+    fun listPets(context: Context): List<RemotePet> {
+        if (!hasSession(context)) return emptyList()
+        val arr = JSONArray(raw(context, "GET", "/pets"))
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val id = o.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val st = o.optJSONObject("state") ?: JSONObject()
+            val slot = o.optInt("slot", PetStore.PRIMARY_SLOT)
+            RemotePet(
+                id = id,
+                slot = slot,
+                species = Species.fromId(o.optString("species")),
+                // optString hands back "" for a JSON null, which is the same thing here: unnamed.
+                name = o.optString("name").takeIf { it.isNotBlank() },
+                leaseExpiresAt = o.optLong("leaseExpiresAt", 0L),
+                stats = PetStats.Snapshot(
+                    hunger = st.optDouble("hunger", 0.0).toFloat(),
+                    energy = st.optDouble("energy", 0.0).toFloat(),
+                    happiness = st.optDouble("happiness", 0.0).toFloat(),
+                    sleeping = st.optBoolean("sleeping", false),
+                    slot = slot,
+                ),
+                anger = st.optDouble("anger", 0.0).toFloat(),
+                sleepStartedAt = st.optLong("sleepStartedAt", 0L),
+                updatedAt = st.optLong("updatedAt", 0L),
+            )
+        }
+    }
+
+    /** A lease as the wire wants it: millis, or null for the primary, who does not expire. */
+    private fun leaseJson(context: Context, pet: Pet): Any {
+        val until = PetStore.expiresAt(context, pet.slot)
+        return if (until == Long.MAX_VALUE || until <= 0L) JSONObject.NULL else until
+    }
+
+    /**
+     * Species and name ride along with the state because this is the only call made after the pet
+     * exists. Without them a restyle — a species swap, a rename — never reaches the server at all,
+     * and a restored device brings back whoever he was on the day the row was first written.
+     */
+    private fun stateJson(context: Context, pet: Pet, s: PetStats.Snapshot) = JSONObject()
+        .put("species", pet.species.id)
+        .put("name", pet.name ?: JSONObject.NULL)
         .put("hunger", s.hunger)
         .put("energy", s.energy)
         .put("happiness", s.happiness)
-        .put("anger", Prefs.anger(context))
+        .put("anger", Prefs.anger(context, pet.slot))
         .put("sleeping", s.sleeping)
-        .put("sleepStartedAt", Prefs.sleepStartedAt(context))
-        .put("updatedAt", Prefs.statsUpdatedAt(context))
+        .put("sleepStartedAt", Prefs.sleepStartedAt(context, pet.slot))
+        .put("updatedAt", Prefs.statsUpdatedAt(context, pet.slot))
 
     // ---- content ------------------------------------------------------------------------------
 

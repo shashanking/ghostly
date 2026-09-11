@@ -10,6 +10,11 @@ import android.content.Context
  * something was last on screen. Every read "catches up" the stored numbers to now before handing
  * them back; a write from that catch-up is skipped for gaps under a second, which also keeps a
  * [Prefs] change listener reacting to it from looping back into itself.
+ *
+ * Every entry point takes a [Pet.slot] rather than a [Pet]. A slot is the whole of what is needed —
+ * the stats live in [Prefs] under keys derived from it — and it cannot go stale in a caller's hand
+ * the way a [Pet] holding a name and a species can. Defaulting it to [PetStore.PRIMARY_SLOT] keeps
+ * every existing caller reading and writing exactly the keys it always did.
  */
 object PetStats {
     const val MAX = 100f
@@ -45,33 +50,56 @@ object PetStats {
      *  second or two later and making "wake him up" look like it does nothing. */
     private const val WAKE_ENERGY_FLOOR = 20f
 
-    data class Snapshot(val hunger: Float, val energy: Float, val happiness: Float, val sleeping: Boolean)
+    /** How often the decaying stats are actually written down — see the note in [snapshot]. */
+    private const val PERSIST_EVERY_MILLIS = 60_000L
+
+    /**
+     * One pet's needs at one instant.
+     *
+     * [slot] rides along so that a caller holding a snapshot — the overlay, the widget, the sync —
+     * still knows whose numbers these are once the call that produced them is out of sight. Without
+     * it, two snapshots taken a line apart are indistinguishable, and writing one back against the
+     * wrong pet would be a silent corruption rather than a compile error.
+     */
+    data class Snapshot(
+        val hunger: Float,
+        val energy: Float,
+        val happiness: Float,
+        val sleeping: Boolean,
+        val slot: Int = PetStore.PRIMARY_SLOT,
+    )
 
     /**
      * Bring the stored values up to date with real elapsed time, and return them. [personality]
      * scales how fast hunger and energy move — a low-maintenance species drains slower, a needy
      * one faster. It says nothing about mood; that's [Emotions]' job, layered on top of this.
+     *
+     * [personality] is passed in rather than looked up from [slot] because this is the layer below
+     * species: [Emotions.snapshot] resolves the character sheet once and hands it down, and the
+     * few callers that only want the raw numbers shouldn't pay for the lookup.
      */
-    /** How often the decaying stats are actually written down — see the note in [snapshot]. */
-    private const val PERSIST_EVERY_MILLIS = 60_000L
-
-    fun snapshot(context: Context, personality: Personality = Personality.NEUTRAL): Snapshot {
+    fun snapshot(
+        context: Context,
+        personality: Personality = Personality.NEUTRAL,
+        slot: Int = PetStore.PRIMARY_SLOT,
+    ): Snapshot {
         val now = System.currentTimeMillis()
-        val last = Prefs.statsUpdatedAt(context)
-        var hunger = Prefs.hunger(context)
-        var energy = Prefs.energy(context)
-        var happiness = Prefs.happiness(context)
-        var sleeping = Prefs.sleeping(context)
+        val last = Prefs.statsUpdatedAt(context, slot)
+        var hunger = Prefs.hunger(context, slot)
+        var energy = Prefs.energy(context, slot)
+        var happiness = Prefs.happiness(context, slot)
+        var sleeping = Prefs.sleeping(context, slot)
         val wasSleeping = sleeping
-        var sleepStartedAt = Prefs.sleepStartedAt(context)
+        var sleepStartedAt = Prefs.sleepStartedAt(context, slot)
 
         if (last == 0L) {
-            // First read ever for this pet — there's no real elapsed time to catch up on yet, only
-            // an anchor to persist so the *next* read measures against a real moment instead of
-            // "now" forever (which would mean he never ages a second, no matter how long the app
-            // stays closed).
-            Prefs.saveStats(context, hunger, energy, happiness, sleeping, now)
-            return Snapshot(hunger, energy, happiness, sleeping)
+            // First read ever for *this* pet — every slot has its own anchor, so a pet leased on
+            // Friday starts ageing on Friday and does not inherit the primary's history. There's
+            // no real elapsed time to catch up on yet, only an anchor to persist so the *next*
+            // read measures against a real moment instead of "now" forever (which would mean he
+            // never ages a second, no matter how long the app stays closed).
+            Prefs.saveStats(context, hunger, energy, happiness, sleeping, now, slot)
+            return Snapshot(hunger, energy, happiness, sleeping, slot)
         }
 
         val elapsedSeconds = (now - last) / 1000f
@@ -127,39 +155,41 @@ object PetStats {
             // prefs-file rewrite. Falling asleep or waking is written immediately — that one is a
             // state change, not a slope.
             if (sleeping != wasSleeping || now - last >= PERSIST_EVERY_MILLIS) {
-                Prefs.saveStats(context, hunger, energy, happiness, sleeping, now)
+                Prefs.saveStats(context, hunger, energy, happiness, sleeping, now, slot)
             }
-            if (sleepStartedAt != Prefs.sleepStartedAt(context)) Prefs.setSleepStartedAt(context, sleepStartedAt)
+            if (sleepStartedAt != Prefs.sleepStartedAt(context, slot)) {
+                Prefs.setSleepStartedAt(context, sleepStartedAt, slot)
+            }
         }
-        return Snapshot(hunger, energy, happiness, sleeping)
+        return Snapshot(hunger, energy, happiness, sleeping, slot)
     }
 
-    fun feed(context: Context) {
-        val s = snapshot(context)
+    fun feed(context: Context, slot: Int = PetStore.PRIMARY_SLOT) {
+        val s = snapshot(context, slot = slot)
         val hunger = (s.hunger + 35f).coerceAtMost(MAX)
         val happiness = (s.happiness + 4f).coerceAtMost(MAX)
-        Prefs.saveStats(context, hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis())
+        Prefs.saveStats(context, hunger, s.energy, happiness, s.sleeping, System.currentTimeMillis(), slot)
     }
 
     /** Returns false, changing nothing, if he's asleep or too worn out to play. */
-    fun play(context: Context): Boolean {
-        val s = snapshot(context)
+    fun play(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Boolean {
+        val s = snapshot(context, slot = slot)
         if (s.sleeping || s.energy < 10f) return false
         val energy = (s.energy - 8f).coerceAtLeast(MIN)
         val happiness = (s.happiness + 18f).coerceAtMost(MAX)
-        Prefs.saveStats(context, s.hunger, energy, happiness, s.sleeping, System.currentTimeMillis())
+        Prefs.saveStats(context, s.hunger, energy, happiness, s.sleeping, System.currentTimeMillis(), slot)
         return true
     }
 
-    fun setSleeping(context: Context, sleeping: Boolean) {
-        val s = snapshot(context)
-        if (sleeping && !s.sleeping) Prefs.setSleepStartedAt(context, System.currentTimeMillis())
+    fun setSleeping(context: Context, sleeping: Boolean, slot: Int = PetStore.PRIMARY_SLOT) {
+        val s = snapshot(context, slot = slot)
+        if (sleeping && !s.sleeping) Prefs.setSleepStartedAt(context, System.currentTimeMillis(), slot)
         // Waking him up (by request or by a poke) needs a floor under his energy, or the very
         // next stats catch-up sees it still at MIN and immediately puts him back to sleep.
         val energy = if (sleeping) s.energy else s.energy.coerceAtLeast(WAKE_ENERGY_FLOOR)
-        Prefs.saveStats(context, s.hunger, energy, s.happiness, sleeping, System.currentTimeMillis())
+        Prefs.saveStats(context, s.hunger, energy, s.happiness, sleeping, System.currentTimeMillis(), slot)
     }
 
     /** A tap or poke while he's asleep stirs him awake. */
-    fun wake(context: Context) = setSleeping(context, false)
+    fun wake(context: Context, slot: Int = PetStore.PRIMARY_SLOT) = setSleeping(context, false, slot)
 }

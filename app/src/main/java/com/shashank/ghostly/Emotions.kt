@@ -120,6 +120,17 @@ enum class Mood { CONTENT, SAD, ANGRY }
  * under sustained neglect and falls under sustained (or bought) care, shaped by his [Personality].
  * It decays against real elapsed time the same lazy way PetStats does, and it's what turns "a bit
  * sad" into "he's genuinely upset with you" if neglect drags on.
+ *
+ * ### Two different things live in here, and they are not scoped the same way
+ *
+ * Anger, mood and the stats underneath them belong to **one pet** and are keyed by [Pet.slot].
+ * The token wallet, the daily allowance and the streak belong to the **account**: one balance, one
+ * reset, however many pets you are keeping. Spending a token on pet 3 has to leave pet 1 with one
+ * fewer token, or five pets would mean five allowances and the economy stops meaning anything.
+ *
+ * So the two halves are deliberately separate functions. The naming carries it: `give…` buys the
+ * thing (account: it can fail for want of a token) and then hands it to a pet; the bare verb —
+ * [treat], [gift] — is only what the pet receives, and never touches the wallet.
  */
 object Emotions {
     private const val MAX = 100f
@@ -146,6 +157,13 @@ object Emotions {
 
     enum class PlayOutcome { SUCCESS, NO_TOKENS, TOO_TIRED }
 
+    /**
+     * One pet's mood, and the account's wallet alongside it.
+     *
+     * Whose mood it is comes from [body]`.slot` rather than a field of its own — one source for it
+     * means the two can never disagree. [tokens] is the account's balance and says nothing about
+     * this pet; it rides along because every screen that shows a mood also shows the wallet.
+     */
     data class Snapshot(
         val body: PetStats.Snapshot,
         val anger: Float,
@@ -155,14 +173,16 @@ object Emotions {
     )
 
     /** Bring anger up to date with real elapsed time (same window PetStats just caught up over),
-     *  and combine it with the body snapshot into a mood. */
-    fun snapshot(context: Context): Snapshot {
-        val personality = Personalities.of(Prefs.species(context))
-        val lastBefore = Prefs.statsUpdatedAt(context)
-        val body = PetStats.snapshot(context, personality)
+     *  and combine it with the body snapshot into a mood. Personality comes from *this pet's*
+     *  species: two pets of different species, treated identically, are meant to sour at
+     *  different rates. */
+    fun snapshot(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Snapshot {
+        val personality = Personalities.of(Prefs.species(context, slot))
+        val lastBefore = Prefs.statsUpdatedAt(context, slot)
+        val body = PetStats.snapshot(context, personality, slot)
         val now = System.currentTimeMillis()
 
-        var anger = Prefs.anger(context)
+        var anger = Prefs.anger(context, slot)
         val elapsedSeconds = (now - lastBefore) / 1000f
         if (elapsedSeconds >= 1f) {
             val e = elapsedSeconds.coerceAtMost(60f * 60f * 24f * 3f)
@@ -174,7 +194,7 @@ object Emotions {
             }
             // Same reasoning as the stats above: recomputed on every read, so it only needs
             // writing when it has actually moved by something worth storing.
-            if (kotlin.math.abs(anger - Prefs.anger(context)) >= 1f) Prefs.saveAnger(context, anger)
+            if (kotlin.math.abs(anger - Prefs.anger(context, slot)) >= 1f) Prefs.saveAnger(context, anger, slot)
         }
 
         val mood = when {
@@ -185,8 +205,21 @@ object Emotions {
         return Snapshot(body, anger, mood, tokens(context), personality)
     }
 
-    /** Catches the daily allowance up to today: a new day resets it to [DAILY_TOKENS] rather than
-     *  adding to it, so tokens don't bank up over a week away — it's a daily allowance, not income. */
+    /**
+     * Catches the daily allowance up to today: a new day resets it to [DAILY_TOKENS] rather than
+     * adding to it, so tokens don't bank up over a week away — it's a daily allowance, not income.
+     *
+     * The wallet is the account's, not a pet's. Keeping five pets does not earn five allowances.
+     *
+     * TODO(phase 4): this **overwrites** the balance, so any token earned by some means other than
+     * the daily grant is destroyed at the next UTC midnight rather than kept. Today nothing else
+     * grants tokens, so the reset is only ever a reset and this is invisible. The moment a rewarded
+     * ad (or a purchase, or a gift) can add to the balance, someone who watches an ad at 23:55 and
+     * doesn't spend it loses what they earned five minutes later, with no message and no way to
+     * tell it happened — the worst possible shape for a bug in something people paid attention for.
+     * The fix is for the grant to be additive — top up to at least [DAILY_TOKENS], leave anything
+     * above it alone — which is a real behaviour change and so does not belong in this phase.
+     */
     fun tokens(context: Context): Int {
         val today = epochDay()
         val grantedDay = Prefs.tokensGrantedDay(context)
@@ -198,7 +231,7 @@ object Emotions {
         return Prefs.tokens(context)
     }
 
-    /** Spends one token if there is one to spend. */
+    /** Spends one token if there is one to spend. Account-wide — see the note on [tokens]. */
     private fun spendToken(context: Context): Boolean {
         val t = tokens(context)
         if (t < 1) return false
@@ -206,34 +239,55 @@ object Emotions {
         return true
     }
 
-    /** A bought pick-me-up: better than a free feed, and knocks a chunk off anger. Returns false,
-     *  changing nothing, if there's no token to spend. */
-    fun giveTreat(context: Context): Boolean {
-        if (!spendToken(context)) return false
-        val s = snapshot(context)
+    // ---- what a pet receives (no wallet in any of these) ---------------------------------------
+
+    /**
+     * A pick-me-up: better than a free feed, and knocks a chunk off anger. How much of the anger it
+     * knocks off is his own [Personality.forgiveness] — the same treat wins a dog back and barely
+     * dents a dragon.
+     */
+    fun treat(context: Context, slot: Int = PetStore.PRIMARY_SLOT) {
+        val s = snapshot(context, slot)
         val hunger = (s.body.hunger + 20f).coerceAtMost(MAX)
         val happiness = (s.body.happiness + 15f).coerceAtMost(MAX)
-        Prefs.saveStats(context, hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis())
-        Prefs.saveAnger(context, (s.anger - 10f * s.personality.forgiveness).coerceIn(MIN, MAX))
-        return true
+        Prefs.saveStats(context, hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis(), slot)
+        Prefs.saveAnger(context, (s.anger - 10f * s.personality.forgiveness).coerceIn(MIN, MAX), slot)
     }
 
-    /** The real apology: a big happiness boost and the anger-reducer that actually wins him back.
-     *  Returns false, changing nothing, if there's no token to spend. */
-    fun giveGift(context: Context): Boolean {
-        if (!spendToken(context)) return false
-        val s = snapshot(context)
+    /** The real apology: a big happiness boost and the anger-reducer that actually wins him back. */
+    fun gift(context: Context, slot: Int = PetStore.PRIMARY_SLOT) {
+        val s = snapshot(context, slot)
         val happiness = (s.body.happiness + 30f).coerceAtMost(MAX)
-        Prefs.saveStats(context, s.body.hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis())
-        Prefs.saveAnger(context, (s.anger - 40f * s.personality.forgiveness).coerceIn(MIN, MAX))
+        Prefs.saveStats(
+            context, s.body.hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis(), slot,
+        )
+        Prefs.saveAnger(context, (s.anger - 40f * s.personality.forgiveness).coerceIn(MIN, MAX), slot)
+    }
+
+    // ---- what it costs (account-wide) -----------------------------------------------------------
+
+    /** Buys a [treat] for the pet in [slot]. Returns false, changing nothing, if there's no token
+     *  to spend — the pet is never touched when the wallet says no. */
+    fun giveTreat(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Boolean {
+        if (!spendToken(context)) return false
+        treat(context, slot)
         return true
     }
 
-    /** Play now costs a token too — checked before spending it, so a token is never wasted on a
-     *  play attempt that was going to fail anyway (asleep, or too worn out). */
-    fun playWithToken(context: Context): PlayOutcome {
+    /** Buys a [gift] for the pet in [slot]. Returns false, changing nothing, if there's no token
+     *  to spend. */
+    fun giveGift(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Boolean {
+        if (!spendToken(context)) return false
+        gift(context, slot)
+        return true
+    }
+
+    /** Play costs a token too — the balance is checked before it is spent, so a token is never
+     *  wasted on a play attempt that was going to fail anyway (asleep, or too worn out). Note the
+     *  order: the wallet can veto it, but only *this* pet's own state decides TOO_TIRED. */
+    fun playWithToken(context: Context, slot: Int = PetStore.PRIMARY_SLOT): PlayOutcome {
         if (tokens(context) < 1) return PlayOutcome.NO_TOKENS
-        if (!PetStats.play(context)) return PlayOutcome.TOO_TIRED
+        if (!PetStats.play(context, slot)) return PlayOutcome.TOO_TIRED
         spendToken(context)
         return PlayOutcome.SUCCESS
     }
