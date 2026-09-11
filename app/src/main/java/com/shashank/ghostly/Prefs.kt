@@ -56,6 +56,12 @@ object Prefs {
     private const val KEY_DAILY = "daily"
     private const val KEY_UNLOCKS_DAY = "unlocks_day"
 
+    /** Which slots hold a pet, as a comma-separated list. Slot 1 is implied and never listed. */
+    private const val KEY_PET_SLOTS = "pet_slots"
+
+    /** When a leased slot runs out, epoch millis — see [PetStore]. */
+    private const val KEY_EXPIRES_AT = "slot_expires_at"
+
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
 
@@ -74,31 +80,78 @@ object Prefs {
     /** The raw store, for callers that need to listen for changes (see [GhostOverlayService]). */
     fun raw(context: Context): SharedPreferences = prefs(context)
 
+    // ---- per-pet keys -------------------------------------------------------------------------
+
+    /**
+     * Where a per-pet value lives, for the pet in [slot].
+     *
+     * Slot 1 gets the bare key, every other slot gets it suffixed. That asymmetry is the whole
+     * migration: every install that exists has one pet under flat keys, and slot 1 simply carries
+     * on reading and writing them. Nothing has to be copied, nothing can be half-copied, and an
+     * install that never grows a second pet stores exactly what it stored before.
+     *
+     * '#' is used as the separator because no base key contains one, which makes [baseOf] and
+     * [slotOf] exact rather than a guess.
+     */
+    fun key(base: String, slot: Int): String = if (slot == PetStore.PRIMARY_SLOT) base else "$base#$slot"
+
+    /** The base key a stored key belongs to — `hunger#3` is still about hunger. */
+    fun baseOf(key: String): String = key.substringBefore('#')
+
+    /** Which pet a stored key belongs to. An unsuffixed key is the primary's. */
+    fun slotOf(key: String): Int =
+        key.substringAfter('#', "").toIntOrNull() ?: PetStore.PRIMARY_SLOT
+
+    /** Slots that have been given a pet, primary excluded — it needs no announcing. */
+    fun petSlots(context: Context): List<Int> =
+        prefs(context).getString(KEY_PET_SLOTS, null)
+            ?.split(',')
+            ?.mapNotNull { it.trim().toIntOrNull() }
+            ?.filter { it in 2..PetStore.MAX_PETS }
+            ?: emptyList()
+
+    fun setPetSlots(context: Context, slots: List<Int>) =
+        prefs(context).edit()
+            .putString(KEY_PET_SLOTS, slots.filter { it != PetStore.PRIMARY_SLOT }.joinToString(","))
+            .apply()
+
+    fun expiresAt(context: Context, slot: Int): Long =
+        prefs(context).getLong(key(KEY_EXPIRES_AT, slot), 0L)
+
+    fun setExpiresAt(context: Context, slot: Int, at: Long) =
+        prefs(context).edit().putLong(key(KEY_EXPIRES_AT, slot), at).apply()
+
+    /** True once anything has ever been stored for this slot — a returning tenant, not a stranger. */
+    fun hasPet(context: Context, slot: Int): Boolean =
+        prefs(context).contains(key(KEY_SPECIES, slot))
+
     fun isEnabled(context: Context) = prefs(context).getBoolean(KEY_ENABLED, false)
 
     fun setEnabled(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_ENABLED, value).apply()
 
-    fun lastX(context: Context, default: Float) = prefs(context).getFloat(KEY_X, default)
+    fun lastX(context: Context, default: Float, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_X, slot), default)
 
-    fun lastY(context: Context, default: Float) = prefs(context).getFloat(KEY_Y, default)
+    fun lastY(context: Context, default: Float, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_Y, slot), default)
 
-    fun savePosition(context: Context, x: Float, y: Float) =
-        prefs(context).edit().putFloat(KEY_X, x).putFloat(KEY_Y, y).apply()
+    fun savePosition(context: Context, x: Float, y: Float, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putFloat(key(KEY_X, slot), x).putFloat(key(KEY_Y, slot), y).apply()
 
     /** The three named sizes, smallest first. */
     val SIZES = listOf(SIZE_WISP, SIZE_SPOOK, SIZE_HAUNT)
 
-    fun sizeDp(context: Context): Int {
-        val stored = prefs(context).getInt(KEY_SIZE, SIZE_DEFAULT)
+    fun sizeDp(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Int {
+        val stored = prefs(context).getInt(key(KEY_SIZE, slot), SIZE_DEFAULT)
         // Size is a choice of three now, not a slider. A value that is not one of them came from
         // the slider this replaced, so it is treated as never having been chosen: everyone starts
         // at Spook, and the picker always has exactly one option lit.
         return if (stored in SIZES) stored else SIZE_DEFAULT
     }
 
-    fun setSizeDp(context: Context, value: Int) =
-        prefs(context).edit().putInt(KEY_SIZE, value.coerceIn(SIZE_MIN, SIZE_MAX)).apply()
+    fun setSizeDp(context: Context, value: Int, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putInt(key(KEY_SIZE, slot), value.coerceIn(SIZE_MIN, SIZE_MAX)).apply()
 
     /** A hue in degrees [0, 360) the whole body is rotated to, or null for his original colours —
      *  see [GhostView.setTint]. */
@@ -139,27 +192,37 @@ object Prefs {
     fun setHapticsEnabled(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_HAPTICS, value).apply()
 
-    fun species(context: Context): Species = Species.fromId(prefs(context).getString(KEY_SPECIES, null))
+    fun species(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Species =
+        Species.fromId(prefs(context).getString(key(KEY_SPECIES, slot), null))
 
-    fun setSpecies(context: Context, species: Species) =
-        prefs(context).edit().putString(KEY_SPECIES, species.id).apply()
+    fun setSpecies(context: Context, species: Species, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putString(key(KEY_SPECIES, slot), species.id).apply()
 
-    fun hunger(context: Context) = prefs(context).getFloat(KEY_HUNGER, DEFAULT_STAT)
-    fun energy(context: Context) = prefs(context).getFloat(KEY_ENERGY, DEFAULT_STAT)
-    fun happiness(context: Context) = prefs(context).getFloat(KEY_HAPPINESS, DEFAULT_STAT)
-    fun sleeping(context: Context) = prefs(context).getBoolean(KEY_SLEEPING, false)
+    fun hunger(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_HUNGER, slot), DEFAULT_STAT)
+
+    fun energy(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_ENERGY, slot), DEFAULT_STAT)
+
+    fun happiness(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_HAPPINESS, slot), DEFAULT_STAT)
+
+    fun sleeping(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getBoolean(key(KEY_SLEEPING, slot), false)
 
     /** When the current nap began, so a fresh one can't be cancelled a second later by [PetStats]'s
      *  own energy-threshold wake check. */
-    fun sleepStartedAt(context: Context) = prefs(context).getLong(KEY_SLEEP_STARTED_AT, 0L)
+    fun sleepStartedAt(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getLong(key(KEY_SLEEP_STARTED_AT, slot), 0L)
 
-    fun setSleepStartedAt(context: Context, at: Long) =
-        prefs(context).edit().putLong(KEY_SLEEP_STARTED_AT, at).apply()
+    fun setSleepStartedAt(context: Context, at: Long, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putLong(key(KEY_SLEEP_STARTED_AT, slot), at).apply()
 
-    fun anger(context: Context) = prefs(context).getFloat(KEY_ANGER, 0f)
+    fun anger(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getFloat(key(KEY_ANGER, slot), 0f)
 
-    fun saveAnger(context: Context, anger: Float) =
-        prefs(context).edit().putFloat(KEY_ANGER, anger).apply()
+    fun saveAnger(context: Context, anger: Float, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putFloat(key(KEY_ANGER, slot), anger).apply()
 
     fun tokens(context: Context) = prefs(context).getInt(KEY_TOKENS, 0)
 
@@ -188,13 +251,15 @@ object Prefs {
         prefs(context).edit().putLong(KEY_LAST_OPENED_AT, at).apply()
 
     /** Null until the user picks one — callers fall back to the species label. */
-    fun name(context: Context): String? = prefs(context).getString(KEY_NAME, null)
+    fun name(context: Context, slot: Int = PetStore.PRIMARY_SLOT): String? =
+        prefs(context).getString(key(KEY_NAME, slot), null)
 
     /**
      * What to call him on screen. Unnamed he goes by the app's own name rather than by what he is
      * — "Ghostly is floating" reads like a pet; "Dog ghost is floating" reads like a product.
      */
-    fun displayName(context: Context): String = name(context) ?: "Ghostly"
+    fun displayName(context: Context, slot: Int = PetStore.PRIMARY_SLOT): String =
+        PetStore.read(context, slot).displayName
 
     /** When the update offer was last put in front of the user, so it isn't put there daily. */
     fun updatePromptedAt(context: Context) = prefs(context).getLong(KEY_UPDATE_PROMPTED_AT, 0L)
@@ -202,20 +267,31 @@ object Prefs {
     fun saveUpdatePromptedAt(context: Context, at: Long) =
         prefs(context).edit().putLong(KEY_UPDATE_PROMPTED_AT, at).apply()
 
-    fun setName(context: Context, name: String?) =
-        prefs(context).edit().putString(KEY_NAME, name?.trim()?.take(18)?.ifEmpty { null }).apply()
+    fun setName(context: Context, name: String?, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit()
+            .putString(key(KEY_NAME, slot), name?.trim()?.take(18)?.ifEmpty { null })
+            .apply()
 
     /** 0 means "never persisted" — a fresh pet has no anchor to measure elapsed time against
      *  yet. See [PetStats.snapshot]'s first-read branch, which writes a real one immediately. */
-    fun statsUpdatedAt(context: Context) = prefs(context).getLong(KEY_STATS_AT, 0L)
+    fun statsUpdatedAt(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getLong(key(KEY_STATS_AT, slot), 0L)
 
-    fun saveStats(context: Context, hunger: Float, energy: Float, happiness: Float, sleeping: Boolean, at: Long) {
+    fun saveStats(
+        context: Context,
+        hunger: Float,
+        energy: Float,
+        happiness: Float,
+        sleeping: Boolean,
+        at: Long,
+        slot: Int = PetStore.PRIMARY_SLOT,
+    ) {
         prefs(context).edit()
-            .putFloat(KEY_HUNGER, hunger)
-            .putFloat(KEY_ENERGY, energy)
-            .putFloat(KEY_HAPPINESS, happiness)
-            .putBoolean(KEY_SLEEPING, sleeping)
-            .putLong(KEY_STATS_AT, at)
+            .putFloat(key(KEY_HUNGER, slot), hunger)
+            .putFloat(key(KEY_ENERGY, slot), energy)
+            .putFloat(key(KEY_HAPPINESS, slot), happiness)
+            .putBoolean(key(KEY_SLEEPING, slot), sleeping)
+            .putLong(key(KEY_STATS_AT, slot), at)
             .apply()
     }
 
@@ -239,7 +315,8 @@ object Prefs {
 
     /** When he was last fed a treat, so the overlay (running as a separate surface) can notice a
      *  feed from the app and play the same drop-and-eat animation. 0 means "never". */
-    fun fedAt(context: Context) = prefs(context).getLong(KEY_FED_AT, 0L)
+    fun fedAt(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getLong(key(KEY_FED_AT, slot), 0L)
 
     /** Screen unlocks so far today (UTC day). Rolls over to zero on the first read of a new day. */
     fun unlocksToday(context: Context): Int {
@@ -254,10 +331,11 @@ object Prefs {
         p.edit().putLong(KEY_UNLOCKS_DAY, today).putInt(KEY_UNLOCKS_TODAY, count + 1).apply()
     }
 
-    fun shade(context: Context): Shade = Shade.fromId(prefs(context).getString(KEY_SHADE, null))
+    fun shade(context: Context, slot: Int = PetStore.PRIMARY_SLOT): Shade =
+        Shade.fromId(prefs(context).getString(key(KEY_SHADE, slot), null))
 
-    fun setShade(context: Context, shade: Shade) =
-        prefs(context).edit().putString(KEY_SHADE, shade.id).apply()
+    fun setShade(context: Context, shade: Shade, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putString(key(KEY_SHADE, slot), shade.id).apply()
 
     private fun epochDay(): Long = System.currentTimeMillis() / 86_400_000L
 
@@ -283,18 +361,27 @@ object Prefs {
     fun userId(context: Context): String? = session(context).getString(KEY_USER_ID, null)
     fun saveSession(context: Context, token: String, userId: String?) =
         session(context).edit().putString(KEY_SESSION_TOKEN, token).putString(KEY_USER_ID, userId).apply()
-    fun clearSession(context: Context) =
-        session(context).edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID).remove(KEY_PET_SERVER_ID).apply()
+    fun clearSession(context: Context) {
+        // Every slot's server id goes, not just the primary's: they identify rows belonging to the
+        // account being signed out of, and leaving one behind would have the next account's pet
+        // syncing into a stranger's row.
+        val edit = session(context).edit().remove(KEY_SESSION_TOKEN).remove(KEY_USER_ID)
+        for (slot in PetStore.PRIMARY_SLOT..PetStore.MAX_PETS) edit.remove(key(KEY_PET_SERVER_ID, slot))
+        edit.apply()
+    }
 
-    fun petServerId(context: Context): String? = session(context).getString(KEY_PET_SERVER_ID, null)
-    fun savePetServerId(context: Context, id: String) =
-        session(context).edit().putString(KEY_PET_SERVER_ID, id).apply()
+    fun petServerId(context: Context, slot: Int = PetStore.PRIMARY_SLOT): String? =
+        session(context).getString(key(KEY_PET_SERVER_ID, slot), null)
+
+    fun savePetServerId(context: Context, id: String, slot: Int = PetStore.PRIMARY_SLOT) =
+        session(context).edit().putString(key(KEY_PET_SERVER_ID, slot), id).apply()
 
     /** The stats timestamp last accepted by the server — see the note in [ContentSync]. */
-    fun lastSyncedStatsAt(context: Context) = prefs(context).getLong(KEY_LAST_SYNCED_STATS_AT, 0L)
+    fun lastSyncedStatsAt(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).getLong(key(KEY_LAST_SYNCED_STATS_AT, slot), 0L)
 
-    fun saveLastSyncedStatsAt(context: Context, at: Long) =
-        prefs(context).edit().putLong(KEY_LAST_SYNCED_STATS_AT, at).apply()
+    fun saveLastSyncedStatsAt(context: Context, at: Long, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putLong(key(KEY_LAST_SYNCED_STATS_AT, slot), at).apply()
 
     fun contentVersion(context: Context) = prefs(context).getInt(KEY_CONTENT_VERSION, 0)
     fun saveContentVersion(context: Context, v: Int) = prefs(context).edit().putInt(KEY_CONTENT_VERSION, v).apply()
@@ -306,6 +393,6 @@ object Prefs {
     fun daily(context: Context): String = prefs(context).getString(KEY_DAILY, "{}") ?: "{}"
     fun saveDaily(context: Context, json: String) = prefs(context).edit().putString(KEY_DAILY, json).apply()
 
-    fun markFed(context: Context) =
-        prefs(context).edit().putLong(KEY_FED_AT, System.currentTimeMillis()).apply()
+    fun markFed(context: Context, slot: Int = PetStore.PRIMARY_SLOT) =
+        prefs(context).edit().putLong(key(KEY_FED_AT, slot), System.currentTimeMillis()).apply()
 }
