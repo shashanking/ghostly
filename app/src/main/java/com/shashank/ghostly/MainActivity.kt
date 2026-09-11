@@ -545,7 +545,8 @@ class MainActivity : Activity() {
             text = getString(R.string.open_app_info)
             isAllCaps = false
             stateListAnimator = null
-            setTextColor(Color.WHITE)
+            // Ink on bone, like every other filled button — accent is near-white.
+            setTextColor(Palette.ink)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             background = rounded(accent, dp(14).toFloat())
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(46))

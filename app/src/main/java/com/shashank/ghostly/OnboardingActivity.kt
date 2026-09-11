@@ -719,7 +719,8 @@ class OnboardingActivity : Activity() {
                 text = getString(R.string.grant)
                 isAllCaps = false
                 stateListAnimator = null
-                setTextColor(Color.WHITE)
+                // Ink on bone. The accent is near-white, so white here is an invisible label.
+                setTextColor(Palette.ink)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 background = rounded(Palette.accent, dp(12).toFloat())
                 layoutParams = LinearLayout.LayoutParams(dp(80), dp(40))
