@@ -11,7 +11,7 @@
     <ImageView
         android:id="@+id/widget_ghost_image"
         android:layout_width="64dp"
-        android:layout_height="64dp"
+        android:layout_height="84dp"
         android:contentDescription="Ghostly" />
 
     <TextView

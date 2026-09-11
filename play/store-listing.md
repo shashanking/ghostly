@@ -44,7 +44,7 @@ Nothing is generated on your phone and nothing is sent anywhere to decide what h
 
 MAKE HIM YOURS
 
-• Three kinds — a ghost, a cat ghost, a dog ghost
+• Twelve kinds — ghost, cat, dog, bunny, fox, bear, mouse, deer, bat, frog, dragon, axolotl
 • Three sizes and four shades, from near-solid Bone to see-through Vapour to inverted Ink
 • Give him a name, and he goes by it in his notification and on his home-screen widget
 • A share card, so you can show him to someone
@@ -94,7 +94,7 @@ your battery, picking from hundreds of written reactions — tumbling, bouncing,
 pacing, peeking in from the side of the screen and saying small things above
 his head.
 
-Also: three kinds, three sizes, four shades, a name of his own, and an
+Also: twelve kinds, three sizes, four shades, a name of his own, and an
 optional Google sign-in so he survives a change of phone.
 ```
 

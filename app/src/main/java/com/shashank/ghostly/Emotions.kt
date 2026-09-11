@@ -3,8 +3,8 @@ package com.shashank.ghostly
 import android.content.Context
 
 /**
- * Each species' character sheet. The only thing that tells a ghost, a cat ghost and a dog ghost
- * apart besides their silhouette — how needy they are, how quickly neglect gets under their skin,
+ * Each species' character sheet. Besides their silhouette and their voice, this is the whole of
+ * what tells one from another — how needy they are, how quickly neglect gets under their skin,
  * and how easily they let it go.
  */
 data class Personality(
@@ -42,10 +42,73 @@ object Personalities {
         favoriteTreat = "a good treat"
     )
 
+    /** Grazes all day and startles at everything, but never stays cross for long. */
+    val BUNNY = Personality(
+        hungerRate = 1.35f, energyRate = 0.9f, patience = 0.8f, forgiveness = 1.3f,
+        favoriteTreat = "something to nibble"
+    )
+
+    /** Restless and always half-scheming: hard to tire out, and keeps his own counsel. */
+    val FOX = Personality(
+        hungerRate = 1.1f, energyRate = 1.15f, patience = 0.9f, forgiveness = 0.9f,
+        favoriteTreat = "something he stole"
+    )
+
+    /** Eats enormously, tires slowly, and takes a great deal to genuinely annoy. */
+    val BEAR = Personality(
+        hungerRate = 1.45f, energyRate = 0.65f, patience = 1.5f, forgiveness = 1.1f,
+        favoriteTreat = "a fistful of berries"
+    )
+
+    /** Tiny, so he burns through everything fast — and forgets a slight just as fast. */
+    val MOUSE = Personality(
+        hungerRate = 1.4f, energyRate = 1.3f, patience = 0.7f, forgiveness = 1.5f,
+        favoriteTreat = "a crumb of cheese"
+    )
+
+    /** Watchful and calm. Very slow to anger, and only middling in a hurry to let it go. */
+    val DEER = Personality(
+        hungerRate = 0.8f, energyRate = 0.85f, patience = 1.8f, forgiveness = 0.9f,
+        favoriteTreat = "a handful of moss"
+    )
+
+    /** Keeps odd hours and spends them moving, but is easy enough about the whole business. */
+    val BAT = Personality(
+        hungerRate = 0.95f, energyRate = 1.1f, patience = 1f, forgiveness = 1.2f,
+        favoriteTreat = "a moth at the window"
+    )
+
+    /** Almost impossible to rile. Also in no particular hurry to come round afterwards. */
+    val FROG = Personality(
+        hungerRate = 0.7f, energyRate = 0.7f, patience = 1.9f, forgiveness = 0.8f,
+        favoriteTreat = "a passing fly"
+    )
+
+    /** Proud, quick to take offence, and the slowest of the lot to forgive one. */
+    val DRAGON = Personality(
+        hungerRate = 1.2f, energyRate = 0.75f, patience = 0.5f, forgiveness = 0.55f,
+        favoriteTreat = "something shiny"
+    )
+
+    /** Serene about everything, barely spends any energy, and holds nothing against anyone. */
+    val AXOLOTL = Personality(
+        hungerRate = 0.85f, energyRate = 0.6f, patience = 1.7f, forgiveness = 1.6f,
+        favoriteTreat = "a cool dark corner"
+    )
+
     fun of(species: Species): Personality = when (species) {
         Species.GHOST -> GHOST
         Species.CAT -> CAT
         Species.DOG -> DOG
+        Species.BUNNY -> BUNNY
+        Species.FOX -> FOX
+        Species.BEAR -> BEAR
+        Species.MOUSE -> MOUSE
+        Species.DEER -> DEER
+        Species.BAT -> BAT
+        Species.FROG -> FROG
+        Species.DRAGON -> DRAGON
+        Species.AXOLOTL -> AXOLOTL
     }
 }
 

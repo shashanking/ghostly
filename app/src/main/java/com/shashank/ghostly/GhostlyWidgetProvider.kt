@@ -62,16 +62,22 @@ class GhostlyWidgetProvider : AppWidgetProvider() {
         /** Renders a still GhostView — off-screen, never attached — to a small bitmap. */
         private fun renderBitmap(context: Context): Bitmap {
             val sizePx = (72 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+            // Taller than wide, matching widget_ghostly.xml: his body is sized off the width and
+            // sits at the bottom of the view, so the spare height above it is the only room a pair
+            // of ears or antlers has. A square bitmap cuts the tall species off flat.
+            val heightPx = sizePx * 13 / 10
             val view = GhostView(context)
             view.species = Prefs.species(context)
             val s = Emotions.snapshot(context)
             view.setMood(s.mood, s.body.sleeping)
 
-            val spec = View.MeasureSpec.makeMeasureSpec(sizePx, View.MeasureSpec.EXACTLY)
-            view.measure(spec, spec)
-            view.layout(0, 0, sizePx, sizePx)
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(sizePx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY),
+            )
+            view.layout(0, 0, sizePx, heightPx)
 
-            val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            val bitmap = Bitmap.createBitmap(sizePx, heightPx, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             return bitmap
         }

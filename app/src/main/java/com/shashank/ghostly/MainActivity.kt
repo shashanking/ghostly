@@ -28,6 +28,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -118,6 +119,7 @@ class MainActivity : Activity() {
 
     // Style
     private val speciesButtons = mutableListOf<Pair<Species, Button>>()
+    private var speciesScroller: HorizontalScrollView? = null
     private val sizeTiles = mutableListOf<Pair<Int, OptionTile>>()
     private val shadeTiles = mutableListOf<Pair<Shade, OptionTile>>()
 
@@ -744,17 +746,27 @@ class MainActivity : Activity() {
         })
 
         column.addView(sectionLabel("Kind"))
-        val speciesRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
-        }
+        // There are twelve of them. Sharing the width between twelve buttons leaves each one about
+        // as wide as its own text, so the row keeps a readable width per button and scrolls
+        // sideways instead — and [refreshPickers] brings whichever one is his into view.
+        val speciesRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         Species.entries.forEachIndexed { index, species ->
-            val button = pickerButton(species.label) { chooseSpecies(species) }
-            if (index > 0) (button.layoutParams as LinearLayout.LayoutParams).marginStart = dp(10)
+            val button = pickerButton(species.short) { chooseSpecies(species) }
+            button.layoutParams = LinearLayout.LayoutParams(dp(88), dp(46)).apply {
+                if (index > 0) marginStart = dp(10)
+            }
             speciesButtons += species to button
             speciesRow.addView(button)
         }
-        column.addView(speciesRow)
+        column.addView(
+            HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(speciesRow)
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .apply { topMargin = dp(10) }
+                speciesScroller = this
+            }
+        )
 
         // Size: three named options, each showing him at that size, rather than a number on a rail.
         column.addView(sectionLabel("Size"))
@@ -840,7 +852,17 @@ class MainActivity : Activity() {
         return OptionTile(root, text, preview)
     }
 
-    private fun optionTileState(tile: OptionTile, selected: Boolean) {
+    /**
+     * [speciesNow] is passed in because the tiles are built once and kept: the preview inside each
+     * one used to keep whatever kind he was at startup, so picking Fox left every size and shade
+     * tile still showing a plain ghost until the app was restarted. Barely visible with three
+     * kinds; obvious with twelve.
+     */
+    private fun optionTileState(tile: OptionTile, selected: Boolean, speciesNow: Species) {
+        if (tile.preview.species != speciesNow) {
+            tile.preview.species = speciesNow
+            tile.preview.invalidate()
+        }
         tile.root.background = if (selected) {
             rounded(Palette.glass, dp(18).toFloat(), Palette.bone)
         } else {
@@ -896,6 +918,26 @@ class MainActivity : Activity() {
             isChecked = Prefs.hapticsEnabled(this@MainActivity)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
             setOnCheckedChangeListener { _, checked -> Prefs.setHapticsEnabled(this@MainActivity, checked) }
+        })
+
+        column.addView(Switch(this).apply {
+            text = getString(R.string.settings_touchable)
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Type.sans(this@MainActivity)
+            thumbTintList = ColorStateList.valueOf(Palette.bone)
+            trackTintList = ColorStateList.valueOf(Palette.cardStroke)
+            // Stored the other way round: clickThrough true (the default) means taps go through him.
+            isChecked = !Prefs.clickThrough(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(14) }
+            setOnCheckedChangeListener { _, checked -> Prefs.setClickThrough(this@MainActivity, !checked) }
+        })
+        column.addView(TextView(this).apply {
+            text = getString(R.string.settings_touchable_body)
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
         })
 
         column.addView(sectionLabel("If he vanishes"))
@@ -1121,15 +1163,24 @@ class MainActivity : Activity() {
         canvas.drawColor(ink)
 
         val ghostSize = dp(180)
+        // Measured taller than wide, the same as the in-app previews: his body is sized off the
+        // width and sits at the bottom, so the spare height is what a pair of antlers is drawn
+        // into. Rendered square they are sliced off flat at the top of the bitmap.
+        val ghostHeight = ghostSize * 13 / 10
         val view = GhostView(this)
         view.species = Prefs.species(this)
         val s = Emotions.snapshot(this)
         view.setMood(s.mood, s.body.sleeping)
-        val spec = View.MeasureSpec.makeMeasureSpec(ghostSize, View.MeasureSpec.EXACTLY)
-        view.measure(spec, spec)
-        view.layout(0, 0, ghostSize, ghostSize)
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(ghostSize, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(ghostHeight, View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, ghostSize, ghostHeight)
+        // Lifted by however far down its own view the body now sits, so he lands exactly where he
+        // did when the render was square and the name below him does not have to move.
+        val bodyTop = (ghostHeight - GhostView.haloPadPx(ghostSize) - ghostSize).coerceAtLeast(0)
         canvas.save()
-        canvas.translate((w - ghostSize) / 2f, dp(36).toFloat())
+        canvas.translate((w - ghostSize) / 2f, dp(36).toFloat() - bodyTop)
         view.draw(canvas)
         canvas.restore()
 
@@ -1453,12 +1504,23 @@ class MainActivity : Activity() {
         }
 
         val currentSize = Prefs.sizeDp(this)
-        sizeTiles.forEach { (sizeDp, tile) -> optionTileState(tile, sizeDp == currentSize) }
+        val speciesNow = Prefs.species(this)
+        sizeTiles.forEach { (sizeDp, tile) -> optionTileState(tile, sizeDp == currentSize, speciesNow) }
         val currentShade = Prefs.shade(this)
-        shadeTiles.forEach { (shade, tile) -> optionTileState(tile, shade == currentShade) }
+        shadeTiles.forEach { (shade, tile) -> optionTileState(tile, shade == currentShade, speciesNow) }
 
         val currentSpecies = Prefs.species(this)
         speciesButtons.forEach { (species, button) -> stylePickerState(button, species == currentSpecies) }
+        // Posted, not immediate: on the first pass through here the row has not been laid out yet,
+        // so the button has no position to scroll to.
+        speciesButtons.firstOrNull { it.first == currentSpecies }?.second?.let { selected ->
+            speciesScroller?.post {
+                val scroller = speciesScroller ?: return@post
+                scroller.smoothScrollTo(
+                    (selected.left - (scroller.width - selected.width) / 2).coerceAtLeast(0), 0
+                )
+            }
+        }
 
         refreshNeeds()
     }
@@ -1531,8 +1593,9 @@ class MainActivity : Activity() {
         playground.holdStill()
         val from = playground.bodyScreenPos()
         handingOver = true
-        if (!GhostOverlayService.start(this, from[0], from[1])) {
+        if (!GhostOverlayService.start(this, from[0], from[1], playground.idleClock())) {
             handingOver = false
+            playground.letGo()
             refreshState()
             return
         }
@@ -1558,11 +1621,13 @@ class MainActivity : Activity() {
         handingOver = true
         GhostOverlayService.comeHome(this, target[0], target[1])
         awaitOverlay({ GhostOverlayService.arrivedHome }) {
-            // He has landed on the spot. The overlay dissolves out there while the box dissolves
-            // in on the same spot, so the swap between the two reads as him settling, not a jump.
-            GhostOverlayService.setVisiting(this, true)
+            // He has landed on the spot. The box takes over first — same place, same point in
+            // his bob, full strength — and only then does the overlay fade out from underneath
+            // him. In that order there is never a moment with less than one ghost on screen.
             playground.placeBodyAtScreen(target[0], target[1])
+            playground.adoptIdleClock(GhostOverlayService.idleClock)
             playground.setAway(false)
+            GhostOverlayService.setVisiting(this, true)
             primaryButton.postDelayed({
                 then()
                 handingOver = false
@@ -1580,7 +1645,7 @@ class MainActivity : Activity() {
                     then()
                     return
                 }
-                primaryButton.postDelayed(this, 40L)
+                primaryButton.postDelayed(this, HANDOVER_POLL_MS)
             }
         }
         step.run()
@@ -1619,7 +1684,7 @@ class MainActivity : Activity() {
         primaryButton.removeCallbacks(returnToFloating)
         // He lifts off from wherever he is standing in the box, not from wherever he left it.
         val from = playground.bodyScreenPos()
-        GhostOverlayService.setVisiting(this, false, from[0], from[1])
+        GhostOverlayService.setVisiting(this, false, from[0], from[1], playground.idleClock())
         playground.setAway(true)
         handingOver = false
         refreshState()
@@ -1675,7 +1740,7 @@ class MainActivity : Activity() {
     private fun chooseShade(shade: Shade) {
         Prefs.setShade(this, shade)
         playground.setShade(shade)
-        shadeTiles.forEach { (s2, tile) -> optionTileState(tile, s2 == shade) }
+        shadeTiles.forEach { (s2, tile) -> optionTileState(tile, s2 == shade, Prefs.species(this)) }
         refreshState()
     }
 
@@ -1712,6 +1777,13 @@ class MainActivity : Activity() {
 
         /** A hand-off that never completes must not leave the screen stuck mid-move. */
         private const val HANDOVER_TIMEOUT_MS = 3_000L
+
+        /**
+         * How often the hand-over is checked for. A frame, not the old forty milliseconds: this is
+         * dead time between him landing and the box taking him over, and two and a half frames of
+         * it is long enough to see as a pause at the end of the flight.
+         */
+        private const val HANDOVER_POLL_MS = 16L
     }
 
     // endregion

@@ -47,12 +47,13 @@ class BehaviourPackTest {
         for (reaction in pack.reactions) {
             val vocal = reaction.vocal ?: continue
             if (vocal.startsWith("!")) continue // a literal line, not a key into the profile
-            val species = reaction.conditions.species ?: Species.entries.map { it.id }.toSet()
-            for (id in species) {
-                val profile = pack.species[id] ?: continue
+            // Kin-aware, because a bunny plays the cat's reactions and so needs the keys they
+            // use in his own profile, not in the cat's — see [Species.kinId].
+            for (species in playersOf(reaction)) {
+                val profile = pack.species[species.id] ?: continue
                 // Checked against the profile directly: resolve() deliberately falls back to a
                 // generic noise for an unknown key, which would hide the mistake from this test.
-                if (vocal !in profile.byMood) missing += "${reaction.id}: '$vocal' missing for $id"
+                if (vocal !in profile.byMood) missing += "${reaction.id}: '$vocal' missing for ${species.id}"
             }
         }
         assertEquals(emptyList<String>(), missing)
@@ -63,6 +64,23 @@ class BehaviourPackTest {
         for (species in Species.entries) {
             assertTrue("no profile for ${species.id}", pack.species.containsKey(species.id))
         }
+    }
+
+    @Test
+    fun `every species has a pool of reactions worth watching`() {
+        // Every reaction in the pack names the original three explicitly; everyone added since
+        // reaches them through [Species.kinId]. Get that wrong and the new fellow is left with the
+        // handful of reactions that name nobody, which looks like a pet that does nothing.
+        for (species in Species.entries) {
+            val reachable = pack.reactions.count { species in playersOf(it) }
+            assertTrue("${species.id} can only ever reach $reachable reactions", reachable > 200)
+        }
+    }
+
+    /** Who can actually be given this reaction: whoever it names, plus whoever takes after them. */
+    private fun playersOf(reaction: BehaviourPack.Reaction): List<Species> {
+        val allowed = reaction.conditions.species ?: return Species.entries
+        return Species.entries.filter { it.id in allowed || it.kinId in allowed }
     }
 
     @Test

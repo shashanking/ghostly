@@ -67,7 +67,9 @@ class BehaviourPack(
         fun matches(c: PetContext): Boolean {
             timeOfDay?.let { if (c.timeOfDay.id !in it) return false }
             dayOfWeek?.let { if (c.dayOfWeek !in it) return false }
-            species?.let { if (c.species.id !in it) return false }
+            // Nothing in the pack is written for a newer species by name, so he answers to his
+            // kin's reactions as well — see [Species.kinId]. For the original three, kin is self.
+            species?.let { if (c.species.id !in it && c.species.kinId !in it) return false }
             batteryBucket?.let { if (c.batteryBucket.id !in it) return false }
             lastEvent?.let { if ((c.lastEvent?.id ?: "none") !in it) return false }
             charging?.let { if (c.charging != it) return false }

@@ -72,6 +72,12 @@ class GhostOverlayService : Service() {
          */
         const val EXTRA_BODY_X = "bodyX"
         const val EXTRA_BODY_Y = "bodyY"
+
+        /**
+         * How far through his idle bob the app's ghost was at the moment of the hand-over, so the
+         * one out here carries on from the same place rather than cross-fading out of step.
+         */
+        const val EXTRA_IDLE_CLOCK = "idleClock"
         private const val CHANNEL_ID = "ghost_overlay"
         private const val NOTIFICATION_ID = 7
         private const val WATCHDOG_INTERVAL_MS = 2_000L
@@ -79,6 +85,13 @@ class GhostOverlayService : Service() {
         /** Writes that can change how he is feeling, or how he looks. Nothing else needs a redraw. */
         private val MOOD_KEYS = setOf("hunger", "energy", "happiness", "anger", "sleeping", "fed_at")
         private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name")
+
+        /**
+         * Whether he can be tapped outside the app. Unlike [MOOD_KEYS]/[LOOK_KEYS] this is not a
+         * redraw: it decides `FLAG_NOT_TOUCHABLE`, which is only read when the window is created
+         * and cannot be flipped on a live one — see [recreateWindow].
+         */
+        private const val CLICK_THROUGH_KEY = "click_through"
 
         /** Frame budgets for the two quiet states — see the note in the frame callback. */
         private const val IDLE_FRAME_SECONDS = 1f / 15f
@@ -148,16 +161,27 @@ class GhostOverlayService : Service() {
         var arrivedHome: Boolean = false
             private set
 
+        /** His idle bob, for the box to pick up when he is handed back — see [EXTRA_IDLE_CLOCK]. */
+        @Volatile
+        var idleClock: Float = 0f
+            private set
+
         /**
          * Returns false when Android refused the start. From the foreground this always works; from
          * a broadcast it can be refused — `MY_PACKAGE_REPLACED` is not one of the exemptions for
          * starting a foreground service, and an unhandled refusal crashes the process.
          */
-        fun start(context: Context, bodyX: Float? = null, bodyY: Float? = null): Boolean = runCatching {
+        fun start(
+            context: Context,
+            bodyX: Float? = null,
+            bodyY: Float? = null,
+            idleClock: Float? = null,
+        ): Boolean = runCatching {
             val intent = Intent(context, GhostOverlayService::class.java).setAction(ACTION_START)
             if (bodyX != null && bodyY != null) {
                 intent.putExtra(EXTRA_BODY_X, bodyX).putExtra(EXTRA_BODY_Y, bodyY)
             }
+            if (idleClock != null) intent.putExtra(EXTRA_IDLE_CLOCK, idleClock)
             context.startForegroundService(intent)
         }.isSuccess
 
@@ -184,7 +208,13 @@ class GhostOverlayService : Service() {
          * and petting can happen in the box — where they belong — while he is out floating, and he
          * drifts straight back out afterwards.
          */
-        fun setVisiting(context: Context, visiting: Boolean, bodyX: Float? = null, bodyY: Float? = null) {
+        fun setVisiting(
+            context: Context,
+            visiting: Boolean,
+            bodyX: Float? = null,
+            bodyY: Float? = null,
+            idleClock: Float? = null,
+        ) {
             if (!isRunning) return
             runCatching {
                 val intent = Intent(context, GhostOverlayService::class.java)
@@ -193,11 +223,19 @@ class GhostOverlayService : Service() {
                 if (bodyX != null && bodyY != null) {
                     intent.putExtra(EXTRA_BODY_X, bodyX).putExtra(EXTRA_BODY_Y, bodyY)
                 }
+                if (idleClock != null) intent.putExtra(EXTRA_IDLE_CLOCK, idleClock)
                 context.startService(intent)
             }
         }
 
         fun stop(context: Context) {
+            // Marked as gone here, not in onDestroy. Tearing the service down takes a few dozen
+            // milliseconds, and everything that asks [isRunning] in between — the app's own
+            // refreshState above all — would otherwise be told he is still out there and empty the
+            // box he has just been handed into, for as long as the teardown takes. He was visibly
+            // blinking out of the box at the end of every "call him home" because of it.
+            isRunning = false
+            isVisiting = false
             runCatching {
                 context.startService(
                     Intent(context, GhostOverlayService::class.java).setAction(ACTION_STOP)
@@ -400,7 +438,12 @@ class GhostOverlayService : Service() {
             // gentle drift gets the full rate; only genuinely slow motion is allowed to save.
             val movingFast = hypot(velX, velY) > driftSpeed * 2f
             val minFrame = when {
-                movingFast || routine != null || homing || dragging -> MIN_FRAME_SECONDS
+                // Every frame the display has, for the two moments the eye is actually following
+                // him: the flight home, and a finger dragging him about. Both are short, both are
+                // deliberate, and the cap was costing them badly — homing runs at up to thirty-odd
+                // times drift speed, which at thirty frames is a sixty-pixel jump between frames.
+                homing || dragging -> 0f
+                movingFast || routine != null -> MIN_FRAME_SECONDS
                 sleeping -> SLEEP_FRAME_SECONDS
                 else -> IDLE_FRAME_SECONDS
             }
@@ -417,6 +460,7 @@ class GhostOverlayService : Service() {
             ghost?.let { view ->
                 view.advance(dt)
                 view.invalidate()
+                idleClock = view.idleClock()
             }
             Choreographer.getInstance().postFrameCallback(this)
         }
@@ -464,6 +508,12 @@ class GhostOverlayService : Service() {
     }
 
     /** Body top-left in screen pixels, as carried on an intent — null when it wasn't. */
+    /** Picks up the box's idle bob, if this intent brought one. */
+    private fun Intent.adoptIdleClock() {
+        if (!hasExtra(EXTRA_IDLE_CLOCK)) return
+        ghost?.syncIdleClock(getFloatExtra(EXTRA_IDLE_CLOCK, 0f))
+    }
+
     private fun Intent.bodyPoint(): Pair<Float, Float>? {
         if (!hasExtra(EXTRA_BODY_X) || !hasExtra(EXTRA_BODY_Y)) return null
         return getFloatExtra(EXTRA_BODY_X, 0f) to getFloatExtra(EXTRA_BODY_Y, 0f)
@@ -502,8 +552,11 @@ class GhostOverlayService : Service() {
                 stopLoop()
             }.start()
         } else {
+            // Same again coming back out of a visit: the box is still drawing him where he is
+            // about to appear, so he takes over at full strength rather than dissolving in.
+            view.animate().cancel()
             view.visibility = android.view.View.VISIBLE
-            view.animate().alpha(1f).setDuration(FADE_MS).start()
+            view.alpha = 1f
             startLoop()
         }
     }
@@ -521,7 +574,10 @@ class GhostOverlayService : Service() {
         if (intent?.action == ACTION_VISIT) {
             val visiting = intent.getBooleanExtra(EXTRA_VISITING, false)
             // Coming back out, he reappears exactly where the box was drawing him.
-            if (!visiting) intent.bodyPoint()?.let { (x, y) -> placeBodyAt(x, y) }
+            if (!visiting) {
+                intent.bodyPoint()?.let { (x, y) -> placeBodyAt(x, y) }
+                intent.adoptIdleClock()
+            }
             setVisiting(visiting)
             return START_STICKY
         }
@@ -551,6 +607,7 @@ class GhostOverlayService : Service() {
             spawn?.let { (x, y) -> placeBodyAt(x, y) }
             startLoop()
         }
+        intent?.adoptIdleClock()
         Prefs.setEnabled(this, true)
         // If the system ever kills us off — Samsung's battery manager is fond of it — this brings
         // him back without the user having to open the app.
@@ -660,9 +717,13 @@ class GhostOverlayService : Service() {
         params.y = posY.toInt()
 
         container.setOnTouchListener { _, event -> onGhostTouch(event) }
-        container.alpha = 0f
+        // Handed over from the box he arrives at full strength, on the spot and at the point in
+        // his bob the box last drew him at — the same picture, so the box can drop away beneath
+        // him without anything showing. Only a cold start (the notification, the watchdog) has
+        // nothing to take over from, and fades in.
+        container.alpha = if (spawn != null) 1f else 0f
         windowManager.addView(container, params)
-        container.animate().alpha(1f).setDuration(FADE_MS).start()
+        if (spawn == null) container.animate().alpha(1f).setDuration(FADE_MS).start()
 
         isRunning = true
         registerReceiver(
@@ -684,12 +745,69 @@ class GhostOverlayService : Service() {
             // service writes on its own ten-second tick, and the sync layer's bookkeeping.
             if (key in MOOD_KEYS) refreshMood()
             if (key in LOOK_KEYS) syncAppearance()
+            if (key == CLICK_THROUGH_KEY && Prefs.clickThrough(this) != clickThrough) {
+                recreateWindow()
+            }
         }
         prefsListener = listener
         Prefs.raw(this).registerOnSharedPreferenceChangeListener(listener)
         refreshMood()
         handler.postDelayed(behaviourRunnable, BEHAVIOUR_INTERVAL_MS)
         handler.postDelayed(syncRunnable, FIRST_SYNC_DELAY_MS)
+    }
+
+    /**
+     * The click-through setting decides `FLAG_NOT_TOUCHABLE` and `FLAG_WATCH_OUTSIDE_TOUCH`, both
+     * read only when the window is added — there is no `updateViewLayout` for flags the way there
+     * is for size. So a change tears the window down and puts up a fresh one, at the same spot,
+     * rather than trying to mutate it live.
+     *
+     * If he is visiting the box when the setting changes, the rebuilt window is put back into that
+     * same hidden, stopped state instead of fading in over the app — leaving it alone here would
+     * mean the old flags silently outlive the toggle until the next full service restart, since
+     * coming back out of a visit reuses the existing window rather than rebuilding it.
+     */
+    private fun recreateWindow() {
+        val wasVisiting = isVisiting
+        if (root == null) return
+        // Mid-gesture bookkeeping tied to the window we're about to throw away.
+        handler.removeCallbacks(petRunnable)
+        pendingTapRunnable?.let { handler.removeCallbacks(it) }
+        pendingTapRunnable = null
+        dragging = false
+        pettingArmed = false
+        homing = false
+        routine = null
+
+        // Same hand-off the service already uses across a process restart: leave a position behind
+        // for the next attachGhost() to pick up, rather than threading it through as a spawn point.
+        Prefs.savePosition(this, posX, posY)
+
+        stopLoop()
+        handler.removeCallbacks(behaviourRunnable)
+        handler.removeCallbacks(syncRunnable)
+        runCatching { unregisterReceiver(screenReceiver) }
+        prefsListener?.let { runCatching { Prefs.raw(this).unregisterOnSharedPreferenceChangeListener(it) } }
+        prefsListener = null
+        root?.let { view -> runCatching { windowManager.removeView(view) } }
+        root = null
+        ghost = null
+        // Stale relayout dedupe from the window we just tore down; force the first position after
+        // rebuild through rather than have it skipped as "no real movement".
+        lastAppliedX = Int.MIN_VALUE
+        lastAppliedY = Int.MIN_VALUE
+
+        attachGhost()
+        if (wasVisiting) {
+            // attachGhost() always fades a fresh window in and starts the loop — undo both so the
+            // rebuilt window lands back in the same hidden, stopped state setVisiting(true) left it in.
+            root?.let { view ->
+                view.animate().cancel()
+                view.alpha = 0f
+                view.visibility = android.view.View.GONE
+            }
+            stopLoop()
+        }
     }
 
     /** Something the user did — the brain wants to know what happened last, and when. */
@@ -1289,21 +1407,13 @@ class GhostOverlayService : Service() {
         when {
             s.body.hunger <= PetStats.HUNGRY_THRESHOLD -> {
                 buzz()
-                view.showBubble(
-                    when (species) {
-                        Species.CAT -> "Meow"
-                        Species.DOG -> "Woof"
-                        Species.GHOST -> "..."
-                    }
-                )
+                view.showBubble(species.callHungry)
             }
-            mood == Mood.CONTENT && s.body.happiness >= 70f -> when (species) {
-                Species.CAT -> view.showBubble("Purr~")
-                Species.DOG -> {
-                    view.showBubble("Woof!")
-                    view.startWiggle()
-                }
-                Species.GHOST -> if (Random.nextBoolean()) view.startWiggle() else view.showBubble("~")
+            mood == Mood.CONTENT && s.body.happiness >= 70f -> {
+                view.showBubble(species.callHappy)
+                // Half the time he shimmies about it as well, so a good mood doesn't always look
+                // like exactly the same two seconds.
+                if (Random.nextBoolean()) view.startWiggle()
             }
         }
     }
@@ -1538,7 +1648,7 @@ class GhostOverlayService : Service() {
             velX = 0f
             velY = 0f
             view.setMotion(0f, 0f)
-            applyPosition()
+            applyPosition(force = true)
             homing = false
             arrivedHome = true
             return
@@ -1625,14 +1735,19 @@ class GhostOverlayService : Service() {
     /** Smallest movement worth a window relayout — a dp, not a pixel. */
     private var moveThresholdPx = 1
 
-    private fun applyPosition() {
+    /**
+     * [force] skips the movement threshold. Used where the exact pixel matters rather than the
+     * saved relayout: landing at the end of a flight home, where the box is about to fade in on
+     * the precise point he was sent to and a leftover dp of slack shows up as a jump.
+     */
+    private fun applyPosition(force: Boolean = false) {
         val view = root ?: return
         val nx = posX.toInt()
         val ny = posY.toInt()
         // Moving the window is a system relayout and recomposite — by far the most expensive thing
         // done per frame. A single pixel of drift is not worth one, and at this speed the old
         // pixel-exact test let almost every frame through.
-        if (abs(nx - lastAppliedX) < moveThresholdPx && abs(ny - lastAppliedY) < moveThresholdPx) return
+        if (!force && abs(nx - lastAppliedX) < moveThresholdPx && abs(ny - lastAppliedY) < moveThresholdPx) return
         lastAppliedX = nx
         lastAppliedY = ny
         params.x = nx - sidePx

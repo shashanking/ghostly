@@ -16,6 +16,7 @@ import android.widget.FrameLayout
 import kotlin.math.PI
 import kotlin.math.hypot
 import kotlin.math.atan2
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
@@ -176,15 +177,18 @@ class GhostPlayground @JvmOverloads constructor(
                 posY = (height - size) / 2f
             }
             entryPlaced = false
+            pinned = false
             velX = 0f
             velY = 0f
             apply()
             ghost.animate().cancel()
             ghost.visibility = VISIBLE
-            // Dissolves in rather than appearing: the overlay is dissolving out on this same spot,
-            // and their idle bobs are not in step, so a hard swap would show him twice for a frame.
-            ghost.alpha = 0f
-            ghost.animate().alpha(1f).setDuration(HANDOVER_MS).start()
+            // Full strength at once, not a dissolve. The overlay is still drawing him on this
+            // exact spot, at this exact point in his bob — the two are the same picture, so the
+            // box simply starts drawing it too and the overlay fades out underneath. Cross-fading
+            // instead meant the two half-opacities never added back up to one, and he blinked out
+            // for a fifth of a second in the middle of coming home.
+            ghost.alpha = 1f
             resume()
         }
         invalidate()
@@ -200,8 +204,30 @@ class GhostPlayground @JvmOverloads constructor(
     fun holdStill() {
         velX = 0f
         velY = 0f
-        pause()
+        pinned = true
+        ghost.setMotion(0f, 0f)
     }
+
+    /**
+     * Parked for a hand-over: he stops wandering the box, but keeps breathing. Stopping the frame
+     * loop outright was most of what made being sent out look like a cut — the overlay fades in
+     * bobbing, over a box ghost frozen mid-bob, and for those two hundred milliseconds you can see
+     * there are two of him.
+     */
+    private var pinned = false
+
+    /** Undoes [holdStill] — he wanders the box again. For a hand-over that never happened. */
+    fun letGo() {
+        pinned = false
+    }
+
+    /** Takes the overlay's idle bob over, so he comes home mid-stride rather than mid-fade. */
+    fun adoptIdleClock(value: Float) {
+        ghost.syncIdleClock(value)
+    }
+
+    /** His idle bob right now, for the overlay to carry on from when he is sent out. */
+    fun idleClock(): Float = ghost.idleClock()
 
     /** His body's top-left in screen pixels — what the overlay needs to pick him up mid-flow. */
     fun bodyScreenPos(): FloatArray {
@@ -225,6 +251,7 @@ class GhostPlayground @JvmOverloads constructor(
         posY = (y - locOnScreen[1]).coerceIn(0f, (height - size).coerceAtLeast(0).toFloat())
         velX = 0f
         velY = 0f
+        pinned = false
         entryPlaced = true
         apply()
     }
@@ -306,11 +333,23 @@ class GhostPlayground @JvmOverloads constructor(
     private fun startDelivery(kind: DeliveryKind) {
         if (!placed || width <= 0 || height <= 0) return
         deliveryKind = kind
-        val margin = size * 0.4f
-        itemX = if (Random.nextBoolean()) margin else width - margin
+        // Anywhere across the box, not just the two edges — it used to be a coin flip between
+        // hard left and hard right, which made every feed look like the last one.
+        val margin = size * 0.55f
+        val span = (width - margin * 2f).coerceAtLeast(1f)
+        itemX = margin + Random.nextFloat() * span
+        // ...but never right on top of him, or there is no chase: nudge it to the roomier side.
+        val ghostCentre = posX + size / 2f
+        if (abs(itemX - ghostCentre) < size) {
+            itemX = if (ghostCentre < width / 2f) {
+                margin + span * (0.55f + Random.nextFloat() * 0.45f)
+            } else {
+                margin + span * (Random.nextFloat() * 0.45f)
+            }
+        }
         itemY = -size * 0.3f
         itemVelY = 0f
-        itemLandY = height * (0.55f + Random.nextFloat() * 0.15f)
+        itemLandY = height * (0.45f + Random.nextFloat() * 0.32f)
         deliveryState = DeliveryState.FALLING
         ghost.notice()
     }
@@ -407,21 +446,9 @@ class GhostPlayground @JvmOverloads constructor(
     private fun vocalise(kind: String) {
         val species = Prefs.species(context)
         val text = when (kind) {
-            "happy" -> when (species) {
-                Species.CAT -> "Purr~"
-                Species.DOG -> "Woof!"
-                Species.GHOST -> "boo-oo"
-            }
-            "hungry" -> when (species) {
-                Species.CAT -> "Meow"
-                Species.DOG -> "Woof?"
-                Species.GHOST -> "boo?"
-            }
-            else -> when (species) {
-                Species.CAT -> "mrr"
-                Species.DOG -> "wf"
-                Species.GHOST -> "boo…"
-            }
+            "happy" -> species.callHappy
+            "hungry" -> species.callHungry
+            else -> species.callIdle
         }
         ghost.showBubble(text, 1.9f)
     }
@@ -522,6 +549,12 @@ class GhostPlayground @JvmOverloads constructor(
 
     private fun tick(dt: Float) {
         if (!placed || away) return
+
+        if (pinned) {
+            ghost.advance(dt)
+            ghost.invalidate()
+            return
+        }
 
         if (deliveryState != DeliveryState.NONE) {
             tickDelivery(dt)

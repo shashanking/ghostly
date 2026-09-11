@@ -24,6 +24,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -91,6 +92,8 @@ class OnboardingActivity : Activity() {
     private val PAGE_COLUMN_TAG = "onboarding-column"
     private var selectedSpecies = Species.GHOST
     private val speciesCards = mutableListOf<Pair<Species, LinearLayout>>()
+    private val speciesPreviews = mutableListOf<Pair<Species, GhostView>>()
+    private var speciesPreviewCallback: Choreographer.FrameCallback? = null
     private val idleCallbacks = mutableListOf<Choreographer.FrameCallback>()
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -169,6 +172,8 @@ class OnboardingActivity : Activity() {
     private fun goTo(step: Step) {
         stopAllIdlePreviews()
         speciesCards.clear()
+        speciesPreviews.clear()
+        speciesPreviewCallback = null
         currentStep = step
         root.removeAllViews()
         val page = (
@@ -234,7 +239,7 @@ class OnboardingActivity : Activity() {
             gravity = Gravity.CENTER
         }
         val ghost = GhostView(this)
-        col.addView(ghost, LinearLayout.LayoutParams(dp(96), dp(96)))
+        col.addView(ghost, LinearLayout.LayoutParams(dp(96), dp(126)))
         startIdlePreview(ghost)
         col.addView(TextView(this).apply {
             text = getString(R.string.ghostly)
@@ -378,7 +383,7 @@ class OnboardingActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(dp(140), dp(140))
         }
         val ghost = GhostView(this)
-        hero.addView(ghost, FrameLayout.LayoutParams(dp(76), dp(76)).apply { gravity = Gravity.CENTER })
+        hero.addView(ghost, FrameLayout.LayoutParams(dp(76), dp(100)).apply { gravity = Gravity.CENTER })
         startIdlePreview(ghost)
         column.addView(hero)
 
@@ -491,16 +496,24 @@ class OnboardingActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
         })
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(28) }
-        }
+        // Twelve cards, so the row scrolls rather than dividing the screen twelve ways.
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        speciesCards.clear()
+        speciesPreviews.clear()
         Species.entries.forEachIndexed { index, species ->
             val speciesCard = buildSpeciesCard(species, leftMargin = index > 0)
             speciesCards += species to speciesCard
             row.addView(speciesCard)
         }
-        column.addView(row)
+        column.addView(
+            HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(row)
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                    .apply { topMargin = dp(28) }
+            }
+        )
+        animateSelectedSpecies()
 
         // Naming him is what turns a floating shape into someone's ghost, so it sits right here
         // with the choice of what he is. Left blank he is simply "Ghost", and can be named later.
@@ -562,7 +575,9 @@ class OnboardingActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             background = speciesCardBackground(species)
-            layoutParams = LinearLayout.LayoutParams(0, dp(150), 1f).apply { if (leftMargin) marginStart = dp(10) }
+            layoutParams = LinearLayout.LayoutParams(dp(92), dp(150)).apply {
+                if (leftMargin) marginStart = dp(10)
+            }
             isClickable = true
             isFocusable = true
             setOnClickListener {
@@ -570,11 +585,14 @@ class OnboardingActivity : Activity() {
                 refreshSpeciesCards()
             }
         }
+        // Taller than it is wide: GhostView sizes his body off the width and sits it at the bottom,
+        // so the spare height above becomes room for ears, antlers and horns. In a square preview
+        // there is only the body's own padding up there, and the tall ones come out flat-topped.
         val ghost = GhostView(this).apply { this.species = species }
-        speciesCard.addView(ghost, LinearLayout.LayoutParams(dp(56), dp(56)).apply { topMargin = dp(4) })
-        startIdlePreview(ghost)
+        speciesPreviews += species to ghost
+        speciesCard.addView(ghost, LinearLayout.LayoutParams(dp(64), dp(84)).apply { topMargin = dp(4) })
         speciesCard.addView(TextView(this).apply {
-            text = species.label
+            text = species.short
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             gravity = Gravity.CENTER
@@ -589,6 +607,19 @@ class OnboardingActivity : Activity() {
 
     private fun refreshSpeciesCards() {
         speciesCards.forEach { (species, view) -> view.background = speciesCardBackground(species) }
+        animateSelectedSpecies()
+    }
+
+    /**
+     * Only the chosen card bobs. Twelve Choreographer chains, each invalidating its own view every
+     * single frame, is a great deal of work for a page where eleven of them are not being looked
+     * at — and a still ghost reads perfectly well as a portrait. The one that moves is the one he
+     * is about to be, which is the selection saying so a second time.
+     */
+    private fun animateSelectedSpecies() {
+        speciesPreviewCallback?.let { stopIdlePreview(it) }
+        val chosen = speciesPreviews.firstOrNull { it.first == selectedSpecies }?.second
+        speciesPreviewCallback = chosen?.let { startIdlePreview(it) }
     }
 
     private fun buildPermissions(): View {
@@ -748,7 +779,7 @@ class OnboardingActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(dp(150), dp(150))
         }
         val ghost = GhostView(this).apply { species = selectedSpecies }
-        hero.addView(ghost, FrameLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER })
+        hero.addView(ghost, FrameLayout.LayoutParams(dp(84), dp(110)).apply { gravity = Gravity.CENTER })
         startIdlePreview(ghost)
         column.addView(hero)
 
@@ -798,7 +829,7 @@ class OnboardingActivity : Activity() {
     // region small shared helpers (deliberately not shared with MainActivity — a working file
     // shouldn't be touched just to save twenty lines)
 
-    private fun startIdlePreview(ghost: GhostView) {
+    private fun startIdlePreview(ghost: GhostView): Choreographer.FrameCallback {
         var last = 0L
         val callback = object : Choreographer.FrameCallback {
             override fun doFrame(frameTimeNanos: Long) {
@@ -812,6 +843,12 @@ class OnboardingActivity : Activity() {
         }
         idleCallbacks += callback
         Choreographer.getInstance().postFrameCallback(callback)
+        return callback
+    }
+
+    private fun stopIdlePreview(callback: Choreographer.FrameCallback) {
+        idleCallbacks -= callback
+        Choreographer.getInstance().removeFrameCallback(callback)
     }
 
     private fun stopAllIdlePreviews() {

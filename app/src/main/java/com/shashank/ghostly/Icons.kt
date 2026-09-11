@@ -123,22 +123,73 @@ class IconDrawable(val glyph: IconGlyph, tint: Int = Color.WHITE) : Drawable() {
         canvas.drawPath(path, fillPaint)
     }
 
+    /** A cookie with a bite taken out — the bite is carved straight into the silhouette (one
+     *  arc plus one inward curve, no boolean path ops) so it reads at a glance rather than as
+     *  a dotted blob, and a slight tilt plus scattered chip flecks keep it looking hand-cut. */
     private fun drawTreat(canvas: Canvas, w: Float, h: Float) {
-        canvas.drawCircle(w / 2f, h / 2f, w * 0.38f, fillPaint)
-        val dotR = w * 0.05f
-        canvas.drawCircle(w * 0.40f, h * 0.40f, dotR, dimPaint)
-        canvas.drawCircle(w * 0.60f, h * 0.45f, dotR, dimPaint)
-        canvas.drawCircle(w * 0.45f, h * 0.62f, dotR, dimPaint)
-        canvas.drawCircle(w * 0.62f, h * 0.65f, dotR, dimPaint)
+        canvas.save()
+        canvas.rotate(-6f, w * 0.5f, h * 0.5f)
+
+        val cx = w * 0.5f
+        val cy = h * 0.55f
+        val r = w * 0.34f
+        val biteStartDeg = -62f
+        val biteEndDeg = 18f
+        val biteEndRad = (Math.PI / 180.0 * biteEndDeg).toFloat()
+        val p1x = cx + r * cos(biteEndRad)
+        val p1y = cy + r * sin(biteEndRad)
+
+        rect.set(cx - r, cy - r, cx + r, cy + r)
+        path.reset()
+        path.moveTo(p1x, p1y)
+        path.arcTo(rect, biteEndDeg, 360f - (biteEndDeg - biteStartDeg))
+        path.quadTo(cx + r * 0.20f, cy - r * 0.60f, p1x, p1y)
+        path.close()
+        canvas.drawPath(path, fillPaint)
+
+        val dotR = w * 0.045f
+        canvas.drawCircle(cx - r * 0.35f, cy + r * 0.12f, dotR, dimPaint)
+        canvas.drawCircle(cx - r * 0.02f, cy + r * 0.50f, dotR * 0.8f, dimPaint)
+        canvas.drawCircle(cx + r * 0.38f, cy + r * 0.32f, dotR, dimPaint)
+        canvas.drawCircle(cx - r * 0.42f, cy - r * 0.32f, dotR * 0.75f, dimPaint)
+
+        canvas.restore()
     }
 
+    /** A wrapped box: solid body and lid, a dimmer ribbon crossing both so it reads as a band
+     *  rather than a solid slab, and a bow built from two lopsided loops (not twin dots) plus a
+     *  knot. A small overall tilt keeps it from looking like a machine-drawn material icon. */
     private fun drawGift(canvas: Canvas, w: Float, h: Float) {
-        rect.set(w * 0.16f, h * 0.40f, w * 0.84f, h * 0.86f)
+        canvas.save()
+        canvas.rotate(-4f, w * 0.5f, h * 0.5f)
+
+        rect.set(w * 0.16f, h * 0.42f, w * 0.84f, h * 0.88f)
+        canvas.drawRoundRect(rect, w * 0.09f, w * 0.09f, fillPaint)
+        rect.set(w * 0.09f, h * 0.30f, w * 0.91f, h * 0.44f)
         canvas.drawRoundRect(rect, w * 0.05f, w * 0.05f, fillPaint)
-        rect.set(w * 0.10f, h * 0.28f, w * 0.90f, h * 0.42f)
-        canvas.drawRoundRect(rect, w * 0.03f, w * 0.03f, fillPaint)
-        canvas.drawCircle(w * 0.38f, h * 0.20f, w * 0.08f, fillPaint)
-        canvas.drawCircle(w * 0.62f, h * 0.20f, w * 0.08f, fillPaint)
+
+        rect.set(w * 0.43f, h * 0.30f, w * 0.57f, h * 0.88f)
+        canvas.drawRect(rect, dimPaint)
+        rect.set(w * 0.16f, h * 0.36f, w * 0.84f, h * 0.42f)
+        canvas.drawRect(rect, dimPaint)
+
+        path.reset()
+        path.moveTo(w * 0.50f, h * 0.28f)
+        path.cubicTo(w * 0.32f, h * 0.06f, w * 0.06f, h * 0.10f, w * 0.20f, h * 0.26f)
+        path.cubicTo(w * 0.28f, h * 0.36f, w * 0.42f, h * 0.32f, w * 0.50f, h * 0.28f)
+        path.close()
+        canvas.drawPath(path, fillPaint)
+
+        path.reset()
+        path.moveTo(w * 0.50f, h * 0.28f)
+        path.cubicTo(w * 0.68f, h * 0.04f, w * 0.95f, h * 0.08f, w * 0.81f, h * 0.25f)
+        path.cubicTo(w * 0.73f, h * 0.37f, w * 0.57f, h * 0.32f, w * 0.50f, h * 0.28f)
+        path.close()
+        canvas.drawPath(path, fillPaint)
+
+        canvas.drawCircle(w * 0.5f, h * 0.29f, w * 0.055f, fillPaint)
+
+        canvas.restore()
     }
 
     private fun drawToken(canvas: Canvas, w: Float, h: Float) {

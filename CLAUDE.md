@@ -61,6 +61,12 @@ Each of these was measured on device and the obvious-looking change re-breaks it
   `GhostOverlayService.start()`, which returns a Boolean, or `Recall.bringBack()`.
 - **No `setShadowLayer` or `LAYER_TYPE_SOFTWARE` in `GhostView`.** It forces the whole view through
   software rendering on every frame; the glow is a cached `RadialGradient` instead.
+- **A species' ears must fit inside the body's own padding.** `GhostView` draws him in a square
+  with a tenth of his width as padding, and that margin — plus whatever headroom the view has —
+  is all the room ears, horns and antlers get. A square preview (widget, share card, picker cards)
+  has no headroom at all, so anything taller than about a quarter of his radius comes out sliced
+  off flat there while looking perfect on screen. The in-app previews are sized taller than wide
+  for exactly this reason; keep them that way.
 - **The 30fps cap (`MIN_FRAME_SECONDS`) is deliberate** — measured at roughly half the CPU of 45fps,
   and every frame moves a window, which is not free. Build gradients and shaders once, not per frame.
 

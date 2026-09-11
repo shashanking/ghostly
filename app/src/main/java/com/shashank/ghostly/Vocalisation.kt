@@ -19,7 +19,10 @@ object Vocalisation {
         if (key.isNullOrBlank()) return null
         if (key.startsWith("!")) return key.removePrefix("!").ifBlank { null }
 
-        val profile = pack.species[species.id] ?: return null
+        // A pack that predates a species — the bundled one is the floor, but a downloaded pack
+        // can be older in content while newer in version — leaves him without a voice of his
+        // own. Falling back on his kin's is better than going silent.
+        val profile = pack.species[species.id] ?: pack.species[species.kinId] ?: return null
         val pattern = profile.byMood[key] ?: profile.byMood[key.lowercase()] ?: return fallback(profile)
 
         val repeats = if (pattern.repeatMax > pattern.repeatMin) {

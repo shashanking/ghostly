@@ -1,5 +1,5 @@
 {
- "version": 2,
+ "version": 3,
  "species": {
   "ghost": {
    "vocal": {
@@ -278,6 +278,843 @@
     "clingy": 0.8,
     "vocal": 0.6,
     "mischief": 0.3
+   }
+  },
+  "bunny": {
+   "vocal": {
+    "syllables": [
+     "nff",
+     "squ",
+     "eep",
+     "brr",
+     "thmp",
+     "nnn",
+     "pff",
+     "chk"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "squ-squ",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "content": {
+      "pattern": "nff",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "thmp-thmp",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "nff-eep",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "thmp",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "nff...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "eep-eep",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "chk?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "eep",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "affectionate": {
+      "pattern": "brr-nff",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": -0.5,
+    "playful": 0.6,
+    "clingy": 0.3,
+    "vocal": 0.2,
+    "mischief": 0.4
+   }
+  },
+  "fox": {
+   "vocal": {
+    "syllables": [
+     "yip",
+     "rff",
+     "kek",
+     "wff",
+     "aww",
+     "hkk",
+     "nrr",
+     "yow"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "yip-yip",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "content": {
+      "pattern": "rff",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "kek-kek",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "yow-yip",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "nrr",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "rff...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "hkk-yip",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "kek?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "yow",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "aww-rff",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": 0.6,
+    "playful": 0.8,
+    "clingy": -0.3,
+    "vocal": 0.5,
+    "mischief": 0.95
+   }
+  },
+  "bear": {
+   "vocal": {
+    "syllables": [
+     "hrm",
+     "grr",
+     "hurf",
+     "mff",
+     "oof",
+     "brum",
+     "snf",
+     "wuf"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "hurf-hurf",
+      "repeat": [
+       2,
+       3
+      ]
+     },
+     "content": {
+      "pattern": "hrm",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "wuf-oof",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "brum-mff",
+      "repeat": [
+       2,
+       5
+      ]
+     },
+     "annoyed": {
+      "pattern": "grr",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "hrm...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "oof",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "snf?",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "spooked": {
+      "pattern": "grr-oof",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "affectionate": {
+      "pattern": "brum-hrm",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": 0.7,
+    "playful": 0.3,
+    "clingy": 0.1,
+    "vocal": 0.3,
+    "mischief": 0.2
+   }
+  },
+  "mouse": {
+   "vocal": {
+    "syllables": [
+     "eep",
+     "sk",
+     "pip",
+     "nk",
+     "tik",
+     "skr",
+     "fff",
+     "peep"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "pip-pip",
+      "repeat": [
+       2,
+       5
+      ]
+     },
+     "content": {
+      "pattern": "sk",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "tik-tik",
+      "repeat": [
+       1,
+       4
+      ]
+     },
+     "hungry": {
+      "pattern": "eep-pip",
+      "repeat": [
+       2,
+       5
+      ]
+     },
+     "annoyed": {
+      "pattern": "skr",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "sk...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "eep",
+      "repeat": [
+       2,
+       3
+      ]
+     },
+     "curious": {
+      "pattern": "pip?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "eep-eep",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "affectionate": {
+      "pattern": "peep-sk",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": -0.4,
+    "playful": 0.7,
+    "clingy": 0.5,
+    "vocal": 0.8,
+    "mischief": 0.6
+   }
+  },
+  "deer": {
+   "vocal": {
+    "syllables": [
+     "hnn",
+     "mrf",
+     "huf",
+     "nnh",
+     "fwh",
+     "brh",
+     "shf",
+     "hmm"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "hnn-hnn",
+      "repeat": [
+       2,
+       3
+      ]
+     },
+     "content": {
+      "pattern": "hmm",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "fwh-fwh",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "nnh-hnn",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "huf",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "sleepy": {
+      "pattern": "hnn...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "huf-fwh",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "shf?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "brh",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "mrf-hnn",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": -0.2,
+    "playful": 0.2,
+    "clingy": -0.2,
+    "vocal": 0.1,
+    "mischief": 0.1
+   }
+  },
+  "bat": {
+   "vocal": {
+    "syllables": [
+     "kree",
+     "fft",
+     "chk",
+     "eek",
+     "tss",
+     "pip",
+     "krr",
+     "ssk"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "kree-kree",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "content": {
+      "pattern": "fft",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "chk-chk",
+      "repeat": [
+       1,
+       4
+      ]
+     },
+     "hungry": {
+      "pattern": "eek-kree",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "tss",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "fft...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "eek",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "curious": {
+      "pattern": "chk?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "kree-eek",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "krr-fft",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": 0.4,
+    "playful": 0.6,
+    "clingy": -0.1,
+    "vocal": 0.6,
+    "mischief": 0.7
+   }
+  },
+  "frog": {
+   "vocal": {
+    "syllables": [
+     "brrp",
+     "blp",
+     "rbt",
+     "gnk",
+     "pop",
+     "crk",
+     "bwp",
+     "ribb"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "brrp-brrp",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "content": {
+      "pattern": "blp",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "pop-pop",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "gnk-brrp",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "crk",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "sleepy": {
+      "pattern": "blp...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "bwp",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "rbt?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "ribb",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "ribb-blp",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": 0.2,
+    "playful": 0.4,
+    "clingy": -0.5,
+    "vocal": 0.4,
+    "mischief": 0.3
+   }
+  },
+  "dragon": {
+   "vocal": {
+    "syllables": [
+     "chrr",
+     "hss",
+     "grk",
+     "fwoo",
+     "rrm",
+     "krk",
+     "shh",
+     "hrr"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "chrr-chrr",
+      "repeat": [
+       2,
+       3
+      ]
+     },
+     "content": {
+      "pattern": "hrr",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "krk-fwoo",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "grk-rrm",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "hss",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "sleepy": {
+      "pattern": "hrr...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "krk-hss",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "grk?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "fwoo",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "chrr-hrr",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": 0.95,
+    "playful": 0.5,
+    "clingy": -0.7,
+    "vocal": 0.4,
+    "mischief": 0.8
+   }
+  },
+  "axolotl": {
+   "vocal": {
+    "syllables": [
+     "blb",
+     "blub",
+     "plp",
+     "mww",
+     "bwp",
+     "glp",
+     "shh",
+     "nmm"
+    ],
+    "byMood": {
+     "happy": {
+      "pattern": "blub-blub",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "content": {
+      "pattern": "blb",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "playful": {
+      "pattern": "plp-plp",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "hungry": {
+      "pattern": "glp-blub",
+      "repeat": [
+       2,
+       4
+      ]
+     },
+     "annoyed": {
+      "pattern": "bwp",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "sleepy": {
+      "pattern": "blb...",
+      "repeat": [
+       1,
+       1
+      ]
+     },
+     "startled": {
+      "pattern": "plp",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "curious": {
+      "pattern": "mww?",
+      "repeat": [
+       1,
+       2
+      ]
+     },
+     "spooked": {
+      "pattern": "glp-glp",
+      "repeat": [
+       1,
+       3
+      ]
+     },
+     "affectionate": {
+      "pattern": "nmm-blb",
+      "repeat": [
+       1,
+       2
+      ]
+     }
+    }
+   },
+   "traits": {
+    "bold": -0.1,
+    "playful": 0.5,
+    "clingy": 0.6,
+    "vocal": 0.2,
+    "mischief": 0.2
    }
   }
  },

@@ -77,6 +77,25 @@ class GhostView(context: Context) : View(context) {
         /** Left and right. Hoisted because allocating it per side, per frame, is thirty a second. */
         private val SIDES = intArrayOf(-1, 1)
 
+        /**
+         * Where the frog's two bulges sit, as fractions of his width. His face is drawn up here
+         * instead of on his head, so the bulges and the eyes have to agree — hence the shared
+         * numbers. The dome's top edge stays inside the view's own padding (0.125 of his width),
+         * which is all the headroom a square preview has.
+         */
+        private const val FROG_EYE_DX = 0.235f
+        private const val FROG_EYE_DY = 0.055f
+        private const val FROG_DOME_R = 0.175f
+
+        /** The dragon's crest spikes, as fractions of his radius either side of centre. */
+        private val CREST = floatArrayOf(-0.26f, 0f, 0.26f)
+
+        /** The axolotl's gill stalks: how far down his head each one starts, and how far out it
+         *  reaches. The middle stalk reaches furthest, which is what makes the three read as a fan
+         *  rather than as a comb. Hoisted for the same reason as [SIDES]. */
+        private val GILL_ROWS = floatArrayOf(0.52f, 0.78f, 1.02f)
+        private val GILL_REACH = floatArrayOf(0.96f, 1.02f, 0.96f)
+
         /** How far the contrast wash reaches, as a fraction of his body width. */
         const val HALO_RADIUS = 0.68f
 
@@ -105,6 +124,16 @@ class GhostView(context: Context) : View(context) {
         alpha = Shade.DEFAULT.bodyAlpha
     }
     private val shadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Antlers and gill stalks: the body's own white, laid down as a thick round-capped stroke
+     *  rather than as a filled path, because at his size a drawn twig is two pixels wide. */
+    private val hornPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.WHITE
+        alpha = Shade.DEFAULT.bodyAlpha
+    }
 
     /** A see-through body disappears on a white screen; the outline keeps his shape readable. */
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -187,6 +216,17 @@ class GhostView(context: Context) : View(context) {
     var species: Species = Species.GHOST
 
     private var phase = 0f
+
+    /**
+     * The always-on idle motion — bob, sway, breath — runs off its own clock rather than [phase].
+     *
+     * Both advance at the same rate, and on their own they would be interchangeable. The point is
+     * that this one can be *set*: when he is handed between the box and the overlay the two views
+     * cross-fade on the same spot, and two ghosts bobbing out of step read as a smear rather than
+     * as one ghost. [phase] cannot be moved to match, because every timer in here — blinks, moods,
+     * the speech bubble — is stored as an absolute point on it.
+     */
+    private var idlePhase = 0f
 
     // Blinking
     private var blinkProgress = 1f // 1 = fully open
@@ -298,6 +338,7 @@ class GhostView(context: Context) : View(context) {
         scleraRimPaint.strokeWidth = w * 0.012f
         linePaint.strokeWidth = w * 0.028f
         whiskerPaint.strokeWidth = w * 0.012f
+        hornPaint.strokeWidth = w * 0.030f
         zzzPaint.textSize = w * 0.16f
         angryBrowPaint.strokeWidth = w * 0.032f
         bubbleTextPaint.textSize = BUBBLE_TEXT_DP * density
@@ -373,6 +414,8 @@ class GhostView(context: Context) : View(context) {
     private fun applyTint() {
         bodyPaint.color = if (tintHue == null) shade.bodyColor else Color.HSVToColor(floatArrayOf(tintHue!!, 0.14f, 1f))
         bodyPaint.alpha = shade.bodyAlpha
+        hornPaint.color = bodyPaint.color
+        hornPaint.alpha = shade.bodyAlpha
         pupilPaint.color = shade.inkColor
         scleraPaint.color = shade.scleraColor
         mouthPaint.color = shade.inkColor
@@ -569,11 +612,23 @@ class GhostView(context: Context) : View(context) {
     }
 
     /**
+     * Where his idle bob has got to. Handed across at a box/overlay hand-over so the ghost being
+     * faded in picks the motion up exactly where the one fading out left it — see [idlePhase].
+     */
+    fun idleClock(): Float = idlePhase
+
+    /** Takes over another view's idle bob mid-stride. */
+    fun syncIdleClock(value: Float) {
+        idlePhase = value
+    }
+
+    /**
      * Advance the animation by [dt] seconds. Called by whoever owns the frame loop — the overlay
      * service on screen, or the playground inside the app.
      */
     fun advance(dt: Float) {
         phase += dt
+        idlePhase += dt
         startle = (startle - 1.3f * dt).coerceAtLeast(0f)
         alert = (alert - 1.1f * dt).coerceAtLeast(0f)
         // Fast while the flick is in progress, slow and steady once the eyes are on target.
@@ -642,11 +697,11 @@ class GhostView(context: Context) : View(context) {
         // While eating, a quick little dip toward the food rides on top of the usual bob, timed
         // with the chomp below.
         val eatingDip = if (eating && !asleep) (0.5f - 0.5f * cos(phase * 16f)) * h * 0.05f else 0f
-        val bob = sin(phase * 2.4f) * h * 0.035f + eatingDip
+        val bob = sin(idlePhase * 2.4f) * h * 0.035f + eatingDip
         // A happy little shimmy rides on top of the normal sway while it's active.
         val wiggle = if (phase < wiggleUntil) sin(phase * 16f) * 7f else 0f
-        val sway = sin(phase * 1.35f) * 3.2f * (1f - fast) + wiggle
-        val breath = 1f + sin(phase * 1.9f) * 0.022f
+        val sway = sin(idlePhase * 1.35f) * 3.2f * (1f - fast) + wiggle
+        val breath = 1f + sin(idlePhase * 1.9f) * 0.022f
         // Irritated: a fast, tiny jitter — too quick to read as movement, just as unease.
         // A tumble, eased at both ends so he tips over rather than spinning like a coin.
         val roll = if (phase < rollUntil) {
@@ -724,9 +779,10 @@ class GhostView(context: Context) : View(context) {
         val angry = !asleep && mood == Mood.ANGRY
         canvas.drawCircle(w / 2f, bodyTop + w * HALO_CENTRE_Y, w * HALO_RADIUS, contrastHaloPaint)
         canvas.drawCircle(w / 2f, bodyTop + w * HALO_CENTRE_Y, w * 0.52f, if (angry) angryGlowPaint else glowPaint)
-        // Ears are drawn before the body: whatever falls inside the dome gets painted over, leaving
-        // only the tip poking out — which is what makes them read as attached to the head.
-        drawEars(canvas, cx, top, r, gw, detailed)
+        // Ears, horns and wings are drawn before the body: whatever falls inside the dome gets
+        // painted over, leaving only the part that pokes out — which is what makes them read as
+        // attached to the head rather than stuck on top of it.
+        drawFeatures(canvas, cx, top, r, gw, detailed)
         canvas.drawPath(bodyPath, bodyPaint)
         canvas.drawPath(bodyPath, outlinePaint)
 
@@ -745,12 +801,22 @@ class GhostView(context: Context) : View(context) {
         // clip every frame, on a path that is rebuilt every frame and so can never be cached.
         canvas.drawPath(bodyPath, shadePaint)
 
+        // Everything else a species wears went on before the body, so that the head swallows the
+        // buried part of it. The bat's wings are the exception and go on afterwards; the reason is
+        // in [drawBatWingsOver].
+        if (species == Species.BAT) drawBatWingsOver(canvas, cx, top, r, gw)
+
         // Face. Deliberately oversized — at this size a subtle face just disappears.
         // Each eye is a pale sclera with a dark pupil that actually travels inside it, so you can
         // see what he is looking at from across the room.
-        val eyeR = gw * (0.175f + 0.03f * startle + 0.02f * alert + 0.06f * (if (giftJoy) 1f else 0f))
-        val eyeY = top + r * (1.0f - 0.05f * startle)
-        val eyeDx = gw * 0.235f
+        // The frog wears his eyes on the two bulges above his crown rather than on his face, so
+        // his are pinned there and kept small enough to sit inside a dome however wide they go.
+        val frog = species == Species.FROG
+        val faceEyeR = gw * (0.175f + 0.03f * startle + 0.02f * alert + 0.06f * (if (giftJoy) 1f else 0f))
+        val eyeR = if (frog) minOf(faceEyeR, gw * FROG_DOME_R * 0.70f) else faceEyeR
+        val faceY = top + r * (1.0f - 0.05f * startle)
+        val eyeY = if (frog) top + gw * (FROG_EYE_DY - 0.012f * startle) else faceY
+        val eyeDx = gw * (if (frog) FROG_EYE_DX else 0.235f)
         val pupilR = eyeR * 0.5f
         val travel = eyeR - pupilR * 1.12f
         val sx = if (asleep) 0f else lookX * travel
@@ -817,7 +883,9 @@ class GhostView(context: Context) : View(context) {
             if (face == Expression.CONFUSED) drawConfusedBrows(canvas, cx, eyeDx, eyeY, eyeR)
         }
 
-        val mouthY = eyeY + eyeR * 1.9f
+        // Hung off the face line rather than the eye line, so the frog — whose eyes are up on his
+        // crown — still keeps his mouth where a mouth goes.
+        val mouthY = faceY + faceEyeR * 1.9f
         if (face == Expression.SMILE || face == Expression.DELIGHTED) {
             // A grin is the frown's arc swept the other way, so it bows down in the middle.
             val w2 = gw * (if (face == Expression.DELIGHTED) 0.22f else 0.19f)
@@ -1026,62 +1094,295 @@ class GhostView(context: Context) : View(context) {
     }
 
     /**
-     * Ears, drawn before the body fill so only the part outside the dome silhouette stays visible.
-     * Ghosts have none; cats get triangles with a pink inner ear; dogs get floppy rotated ovals.
+     * Whatever the species wears outside the plain dome: ears, horns, antlers, wings, frills.
+     *
+     * Drawn before the body fill, so only the part that falls outside the silhouette survives.
+     *
+     * Everything here lives inside his square's own padding, which is all the room the view has:
+     * roughly a tenth of his width on each side, and — in a square preview, where there is no
+     * bubble headroom — about a quarter of his radius above his crown. The in-app pickers give
+     * their previews a third more height than width for exactly this reason. Overshoot it and the
+     * tips are sliced off in the pickers and the widget while looking perfectly fine on screen,
+     * which is a difficult thing to notice from a compile.
      */
-    private fun drawEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float, detailed: Boolean) {
+    private fun drawFeatures(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float, detailed: Boolean) {
         when (species) {
             Species.GHOST -> return
-            Species.CAT -> {
-                val earHeight = gw * 0.275f
-                val earHalfBase = gw * 0.13f
-                for (side in SIDES) {
-                    val baseCx = cx + side * r * 0.60f
-                    val baseY = top + r * 0.30f
-                    val tipX = cx + side * r * 0.98f
-                    val tipY = baseY - earHeight
+            Species.CAT -> drawCatEars(canvas, cx, top, r, gw, detailed)
+            Species.DOG -> drawDogEars(canvas, cx, top, r, gw)
+            Species.BUNNY -> drawBunnyEars(canvas, cx, top, r, gw, detailed)
+            Species.FOX -> drawFoxEars(canvas, cx, top, r, gw, detailed)
+            Species.BEAR -> drawRoundEars(canvas, cx, top, r, gw, detailed, spread = 0.66f, drop = 0.14f, radius = 0.13f)
+            Species.MOUSE -> drawRoundEars(canvas, cx, top, r, gw, detailed, spread = 0.74f, drop = 0.20f, radius = 0.20f)
+            Species.DEER -> drawAntlers(canvas, cx, top, r, gw)
+            Species.BAT -> drawBatEars(canvas, cx, top, r, gw)
+            Species.FROG -> drawFrogEyes(canvas, cx, top, r, gw)
+            Species.DRAGON -> drawDragonHorns(canvas, cx, top, r, gw)
+            Species.AXOLOTL -> drawGills(canvas, cx, top, r, gw)
+        }
+    }
 
-                    earPath.reset()
-                    earPath.moveTo(baseCx - earHalfBase, baseY)
-                    earPath.lineTo(tipX, tipY)
-                    earPath.lineTo(baseCx + earHalfBase, baseY)
-                    earPath.close()
-                    canvas.drawPath(earPath, bodyPaint)
-                    canvas.drawPath(earPath, outlinePaint)
+    /** Triangles with a pale inner ear, standing almost straight up off the crown. */
+    private fun drawCatEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float, detailed: Boolean) {
+        val earHeight = gw * 0.275f
+        val earHalfBase = gw * 0.13f
+        for (side in SIDES) {
+            val baseCx = cx + side * r * 0.60f
+            val baseY = top + r * 0.30f
+            val tipX = cx + side * r * 0.98f
+            val tipY = baseY - earHeight
 
-                    if (detailed) {
-                        val innerHalf = earHalfBase * 0.42f
-                        val innerBaseCx = baseCx + side * earHalfBase * 0.15f
-                        val innerBaseY = baseY - earHeight * 0.12f
-                        val innerTipX = baseCx + (tipX - baseCx) * 0.75f
-                        val innerTipY = baseY + (tipY - baseY) * 0.75f
-                        earPath.reset()
-                        earPath.moveTo(innerBaseCx - innerHalf, innerBaseY)
-                        earPath.lineTo(innerTipX, innerTipY)
-                        earPath.lineTo(innerBaseCx + innerHalf, innerBaseY)
-                        earPath.close()
-                        canvas.drawPath(earPath, blushPaint)
-                    }
-                }
+            earPath.reset()
+            earPath.moveTo(baseCx - earHalfBase, baseY)
+            earPath.lineTo(tipX, tipY)
+            earPath.lineTo(baseCx + earHalfBase, baseY)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+
+            if (detailed) {
+                val innerHalf = earHalfBase * 0.42f
+                val innerBaseCx = baseCx + side * earHalfBase * 0.15f
+                val innerBaseY = baseY - earHeight * 0.12f
+                val innerTipX = baseCx + (tipX - baseCx) * 0.75f
+                val innerTipY = baseY + (tipY - baseY) * 0.75f
+                earPath.reset()
+                earPath.moveTo(innerBaseCx - innerHalf, innerBaseY)
+                earPath.lineTo(innerTipX, innerTipY)
+                earPath.lineTo(innerBaseCx + innerHalf, innerBaseY)
+                earPath.close()
+                canvas.drawPath(earPath, blushPaint)
             }
-            Species.DOG -> {
-                // Long and narrow, hugging close to the body: the view only has a thin margin
-                // (the padding) outside the head silhouette, so width has to come from length, not
-                // from swinging wide. canvas.rotate is clockwise for positive degrees, which pulls
-                // a shape *toward* the centre on the right side — so the outward lean needs the
-                // opposite sign from what you'd first guess.
-                val earW = gw * 0.20f
-                val earH = gw * 0.50f
-                val anchorY = top + r * 0.34f
-                for (side in SIDES) {
-                    val anchorX = cx + side * r * 0.94f
-                    canvas.save()
-                    canvas.rotate(-side * 14f, anchorX, anchorY)
-                    rect.set(anchorX - earW / 2f, anchorY, anchorX + earW / 2f, anchorY + earH)
-                    canvas.drawOval(rect, bodyPaint)
-                    canvas.drawOval(rect, outlinePaint)
-                    canvas.restore()
-                }
+        }
+    }
+
+    /**
+     * Long and narrow, hugging close to the body: the view only has a thin margin (the padding)
+     * outside the head silhouette, so width has to come from length, not from swinging wide.
+     * canvas.rotate is clockwise for positive degrees, which pulls a shape *toward* the centre on
+     * the right side — so the outward lean needs the opposite sign from what you'd first guess.
+     */
+    private fun drawDogEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val earW = gw * 0.20f
+        val earH = gw * 0.50f
+        val anchorY = top + r * 0.34f
+        for (side in SIDES) {
+            val anchorX = cx + side * r * 0.94f
+            canvas.save()
+            canvas.rotate(-side * 14f, anchorX, anchorY)
+            rect.set(anchorX - earW / 2f, anchorY, anchorX + earW / 2f, anchorY + earH)
+            canvas.drawOval(rect, bodyPaint)
+            canvas.drawOval(rect, outlinePaint)
+            canvas.restore()
+        }
+    }
+
+    /** Upright and narrow, leaning apart at the tips — the shape a cat's ears are not. */
+    private fun drawBunnyEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float, detailed: Boolean) {
+        val earW = gw * 0.15f
+        val earH = gw * 0.44f
+        val anchorY = top + r * 0.32f
+        for (side in SIDES) {
+            val anchorX = cx + side * r * 0.38f
+            canvas.save()
+            canvas.rotate(side * 9f, anchorX, anchorY)
+            rect.set(anchorX - earW / 2f, anchorY - earH, anchorX + earW / 2f, anchorY)
+            canvas.drawOval(rect, bodyPaint)
+            canvas.drawOval(rect, outlinePaint)
+            if (detailed) {
+                val innerW = earW * 0.44f
+                val innerTop = anchorY - earH * 0.88f
+                rect.set(anchorX - innerW / 2f, innerTop, anchorX + innerW / 2f, innerTop + earH * 0.62f)
+                canvas.drawOval(rect, blushPaint)
+            }
+            canvas.restore()
+        }
+    }
+
+    /** Broad and swept out sideways, where a cat's are narrow and stand up. Side by side that is
+     *  the whole difference between the two, so it has to be worth seeing at thumbnail size. */
+    private fun drawFoxEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float, detailed: Boolean) {
+        val earHalfBase = gw * 0.19f
+        for (side in SIDES) {
+            val baseCx = cx + side * r * 0.46f
+            val baseY = top + r * 0.40f
+            val tipX = cx + side * r * 1.14f
+            val tipY = baseY - gw * 0.21f
+
+            earPath.reset()
+            earPath.moveTo(baseCx - earHalfBase, baseY)
+            earPath.lineTo(tipX, tipY)
+            earPath.lineTo(baseCx + earHalfBase, baseY)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+
+            if (detailed) {
+                val innerHalf = earHalfBase * 0.40f
+                earPath.reset()
+                earPath.moveTo(baseCx - innerHalf, baseY - gw * 0.03f)
+                earPath.lineTo(baseCx + (tipX - baseCx) * 0.72f, baseY + (tipY - baseY) * 0.72f)
+                earPath.lineTo(baseCx + innerHalf, baseY - gw * 0.03f)
+                earPath.close()
+                canvas.drawPath(earPath, blushPaint)
+            }
+        }
+    }
+
+    /**
+     * Two circles on the crown, mostly swallowed by the head — the bear and the mouse are the same
+     * shape at different sizes, which is exactly how the two read apart at a glance.
+     */
+    private fun drawRoundEars(
+        canvas: Canvas,
+        cx: Float,
+        top: Float,
+        r: Float,
+        gw: Float,
+        detailed: Boolean,
+        spread: Float,
+        drop: Float,
+        radius: Float,
+    ) {
+        val earR = gw * radius
+        for (side in SIDES) {
+            val ex = cx + side * r * spread
+            val ey = top + r * drop
+            canvas.drawCircle(ex, ey, earR, bodyPaint)
+            canvas.drawCircle(ex, ey, earR, outlinePaint)
+            if (detailed) canvas.drawCircle(ex, ey - earR * 0.18f, earR * 0.52f, blushPaint)
+        }
+    }
+
+    /** A beam and two tines a side, stroked rather than filled: at his size a drawn twig would be
+     *  two pixels of nothing. Small swept-back ears underneath, so the crown is not bare. */
+    private fun drawAntlers(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val baseY = top + r * 0.26f
+        for (side in SIDES) {
+            val baseX = cx + side * r * 0.40f
+            earPath.reset()
+            earPath.moveTo(baseX, baseY)
+            earPath.quadTo(baseX + side * r * 0.10f, baseY - gw * 0.20f, cx + side * r * 0.78f, top - gw * 0.24f)
+            earPath.moveTo(baseX + side * r * 0.08f, baseY - gw * 0.12f)
+            earPath.lineTo(baseX + side * r * 0.42f, baseY - gw * 0.19f)
+            earPath.moveTo(baseX + side * r * 0.14f, baseY - gw * 0.20f)
+            earPath.lineTo(baseX + side * r * 0.02f, baseY - gw * 0.30f)
+            canvas.drawPath(earPath, hornPaint)
+
+            val earW = gw * 0.10f
+            val earH = gw * 0.22f
+            val anchorX = cx + side * r * 0.68f
+            val anchorY = top + r * 0.30f
+            canvas.save()
+            canvas.rotate(side * 55f, anchorX, anchorY)
+            rect.set(anchorX - earW / 2f, anchorY - earH, anchorX + earW / 2f, anchorY)
+            canvas.drawOval(rect, bodyPaint)
+            canvas.drawOval(rect, outlinePaint)
+            canvas.restore()
+        }
+    }
+
+    /** Two tall sharp ears. The wings are not here — see [drawBatWingsOver]. */
+    private fun drawBatEars(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val half = gw * 0.08f
+        for (side in SIDES) {
+            val baseCx = cx + side * r * 0.34f
+            val baseY = top + r * 0.18f
+            earPath.reset()
+            earPath.moveTo(baseCx - half, baseY)
+            earPath.lineTo(cx + side * r * 0.62f, top - gw * 0.24f)
+            earPath.lineTo(baseCx + half, baseY)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+        }
+    }
+
+    /**
+     * The one feature drawn over the body rather than behind it.
+     *
+     * Below the dome his sides are straight, so a wing tucked behind him shows only the sliver
+     * that clears his edge — which reads as a fin, not a wing. Laid over the top in his own
+     * translucent white it reads as a wing folded against him, and the doubled alpha is what makes
+     * the shape visible at all.
+     */
+    private fun drawBatWingsOver(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val wingTop = top + r * 0.95f
+        for (side in SIDES) {
+            earPath.reset()
+            earPath.moveTo(cx + side * r * 0.16f, wingTop)
+            earPath.lineTo(cx + side * r * 1.14f, wingTop + r * 0.10f)
+            earPath.quadTo(
+                cx + side * r * 0.90f, wingTop + r * 0.66f,
+                cx + side * r * 0.74f, wingTop + r * 0.42f
+            )
+            earPath.quadTo(
+                cx + side * r * 0.60f, wingTop + r * 0.84f,
+                cx + side * r * 0.44f, wingTop + r * 0.52f
+            )
+            earPath.quadTo(
+                cx + side * r * 0.32f, wingTop + r * 0.70f,
+                cx + side * r * 0.16f, wingTop + r * 0.42f
+            )
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+        }
+    }
+
+    /**
+     * Two domes straddling the crown, each with a pupil of its own. They sit high enough that the
+     * pupil clears the head silhouette — drawn before the body, anything lower is painted over.
+     * That is the whole trick, and the reason the domes are not simply bigger.
+     */
+    private fun drawFrogEyes(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        // Only the two bulges. What goes *in* them is his ordinary face, moved up here by
+        // [FROG_EYE_DY] — draw eyes of their own and he ends up with four.
+        for (side in SIDES) {
+            val ex = cx + side * gw * FROG_EYE_DX
+            val ey = top + gw * FROG_EYE_DY
+            canvas.drawCircle(ex, ey, gw * FROG_DOME_R, bodyPaint)
+            canvas.drawCircle(ex, ey, gw * FROG_DOME_R, outlinePaint)
+        }
+    }
+
+    /** Horns swept back and out, over a crest of three spikes along the crown. */
+    private fun drawDragonHorns(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val half = gw * 0.085f
+        for (side in SIDES) {
+            val baseCx = cx + side * r * 0.56f
+            val baseY = top + r * 0.26f
+            earPath.reset()
+            earPath.moveTo(baseCx - half, baseY)
+            earPath.lineTo(cx + side * r * 1.00f, top - gw * 0.10f)
+            earPath.lineTo(baseCx + half, baseY)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+        }
+        for (peak in CREST) {
+            val px = cx + peak * r
+            earPath.reset()
+            earPath.moveTo(px - gw * 0.055f, top + gw * 0.09f)
+            earPath.lineTo(px, top - gw * 0.13f)
+            earPath.lineTo(px + gw * 0.055f, top + gw * 0.09f)
+            earPath.close()
+            canvas.drawPath(earPath, bodyPaint)
+            canvas.drawPath(earPath, outlinePaint)
+        }
+    }
+
+    /** Three feathery stalks a side, each ending in a little bead. */
+    private fun drawGills(canvas: Canvas, cx: Float, top: Float, r: Float, gw: Float) {
+        val beadR = gw * 0.055f
+        for (side in SIDES) {
+            for (i in GILL_ROWS.indices) {
+                val y = top + r * GILL_ROWS[i]
+                val outX = cx + side * r * GILL_REACH[i]
+                val outY = y - r * 0.06f
+                canvas.drawLine(cx + side * r * 0.78f, y, outX, outY, hornPaint)
+                canvas.drawCircle(outX, outY, beadR, bodyPaint)
+                canvas.drawCircle(outX, outY, beadR, outlinePaint)
             }
         }
     }

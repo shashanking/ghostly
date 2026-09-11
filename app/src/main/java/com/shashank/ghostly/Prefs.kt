@@ -119,21 +119,17 @@ object Prefs {
         prefs(context).edit().putFloat(KEY_COLOR_HUE, hue ?: -1f).apply()
 
     /**
-     * When true the ghost is intangible: every touch goes straight to the app underneath and he
-     * never blocks a button or a keyboard key. He still notices taps — Android just will not tell
-     * an overlay *where* an outside tap landed, so in this mode he cannot be poked precisely or
-     * dragged.
+     * When true (the default) the ghost is intangible outside the app: every touch goes straight
+     * to whatever is underneath him and he never blocks a button or a keyboard key. He still
+     * notices taps — Android just will not tell an overlay *where* an outside tap landed, so in
+     * this mode he cannot be poked precisely or dragged.
+     *
+     * When false he is solid outside the app too: he can be tapped, dragged and held to pet out
+     * there, at the cost of a small halo around him swallowing whatever is underneath it. See
+     * [GhostOverlayService] for why flipping this tears the overlay window down and puts up a
+     * fresh one rather than updating it in place.
      */
-    /**
-     * Always true. He can only be touched in his box now, so the overlay is unconditionally
-     * intangible and there is nothing left to choose — which also means nothing he floats over is
-     * ever blocked, on any device, in any state. An older build's stored preference is dropped.
-     */
-    fun clickThrough(context: Context): Boolean {
-        val store = prefs(context)
-        if (store.contains(KEY_CLICK_THROUGH)) store.edit().remove(KEY_CLICK_THROUGH).apply()
-        return true
-    }
+    fun clickThrough(context: Context): Boolean = prefs(context).getBoolean(KEY_CLICK_THROUGH, true)
 
     fun setClickThrough(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_CLICK_THROUGH, value).apply()
