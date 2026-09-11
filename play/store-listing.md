@@ -12,7 +12,7 @@ Copy/paste straight into Play Console. Character limits are noted; everything he
 | Category | **Personalization** |
 | Tags | Widgets & shortcuts, Wallpapers & themes, Casual |
 | Contact email | cvs.devs01@gmail.com |
-| Website | `https://shashanking.github.io/ghostly-privacy/` *(optional)* |
+| Website | `https://shashanking.github.io` — **required once ads ship**, see `site-root/README.md` |
 | Privacy policy | `https://shashanking.github.io/ghostly-privacy/privacy-policy.html` — **live** |
 
 ## Short description (max 80)
