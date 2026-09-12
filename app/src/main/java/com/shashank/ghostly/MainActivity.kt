@@ -171,6 +171,9 @@ class MainActivity : Activity() {
             Toast.makeText(this, "${petName()} missed you!", Toast.LENGTH_LONG).show()
         }
 
+        // Before anything is drawn: if he is meant to be out and is not, put him back out rather
+        // than letting this screen decide he has come home.
+        reviveIfHeShouldBeOut()
         refreshState()
         // The overlay can come and go without this screen being told — stopped from its
         // notification, or restarted by the system — so keep the button honest while we're visible.
@@ -940,6 +943,25 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
         })
 
+        column.addView(Switch(this).apply {
+            text = getString(R.string.settings_stay_put)
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Type.sans(this@MainActivity)
+            thumbTintList = ColorStateList.valueOf(Palette.bone)
+            trackTintList = ColorStateList.valueOf(Palette.cardStroke)
+            isChecked = Prefs.stayPut(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(22) }
+            setOnCheckedChangeListener { _, checked -> Prefs.setStayPut(this@MainActivity, checked) }
+        })
+        column.addView(TextView(this).apply {
+            text = getString(R.string.settings_stay_put_body)
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
+        })
+
         column.addView(sectionLabel("If he vanishes"))
         column.addView(TextView(this).apply {
             text = getString(R.string.settings_battery_body)
@@ -1633,6 +1655,33 @@ class MainActivity : Activity() {
                 handingOver = false
                 refreshState()
             }, HANDOVER_OVERLAP_MS)
+        }
+    }
+
+    /**
+     * He is supposed to be out there and he is not: his phone killed the overlay, which is the
+     * whole reason [Watchdog] and [Recall] exist. Neither of them can always put it right — a
+     * foreground service start from a broadcast is refused once the process has gone, and all
+     * Recall can do then is leave a notification saying he stopped.
+     *
+     * This screen can always put it right. An app in the foreground may start a foreground service
+     * whenever it likes, so opening Ghostly is the one moment the fix is guaranteed. It should look
+     * like nothing happened rather than like he came home: he reappears at the spot he was last
+     * saved at, because the service restores that when it is started without one.
+     *
+     * [handingOver] is held for the same reason it is held during a real hand-over — to stop
+     * [refreshState] filling the box with him while the overlay is on its way up.
+     */
+    private fun reviveIfHeShouldBeOut() {
+        if (GhostOverlayService.isRunning) return
+        if (!Prefs.isEnabled(this)) return
+        if (!Settings.canDrawOverlays(this)) return
+        if (!GhostOverlayService.start(this)) return
+        Recall.clearNotification(this)
+        handingOver = true
+        awaitOverlay({ GhostOverlayService.isRunning }) {
+            handingOver = false
+            refreshState()
         }
     }
 

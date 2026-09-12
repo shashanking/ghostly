@@ -107,6 +107,9 @@ class GhostOverlayService : Service() {
          */
         private const val CLICK_THROUGH_KEY = "click_through"
 
+        /** Whether he wanders at all. Account-wide, like [CLICK_THROUGH_KEY], and read live. */
+        private const val STAY_PUT_KEY = "stay_put"
+
         /** Frame budgets for the two quiet states — see the note in the frame callback. */
         private const val IDLE_FRAME_SECONDS = 1f / 15f
         private const val SLEEP_FRAME_SECONDS = 1f / 8f
@@ -271,6 +274,13 @@ class GhostOverlayService : Service() {
 
     private var density = 1f
     private var clickThrough = true
+
+    /**
+     * He holds his position instead of drifting. Unlike click-through this needs no window rebuild
+     * — it only decides whether anything moves him — so it is read live and takes effect on the
+     * next frame.
+     */
+    private var stayPut = false
     private var touchSlop = 0
 
     /** Smallest movement worth a window relayout — a dp, not a pixel. See [FloatingPet.applyPosition]. */
@@ -1172,6 +1182,14 @@ class GhostOverlayService : Service() {
                 view.setPuffTarget(0f)
             }
 
+            // Kept in one place: he still gets the face, the noise and the flourish the pack
+            // chose, but not the part that would carry him off. Returning before the locomotion
+            // rather than swallowing it in tick() matters — a routine set here and never advanced
+            // stays non-null for good, and frameBudget reads a live routine as "moving", so he
+            // would sit perfectly still while drawing at thirty frames a second. Measured: that
+            // mistake cost more than letting him wander.
+            if (stayPut) return
+
             // Locomotion is a nudge to the drift, never a teleport: he is a ghost, he glides.
             val speed = driftSpeed * (0.6f + behaviour.intensity)
             when (behaviour.locomotion) {
@@ -1411,6 +1429,21 @@ class GhostOverlayService : Service() {
             refreshMood()
         }
 
+        /**
+         * Called when "keep him in one place" is switched either way. Turning it on drops whatever
+         * he was in the middle of — a routine mid-flight would otherwise carry on to its end and
+         * only then stop, which reads as the setting not working.
+         */
+        fun settleForStayPut() {
+            if (!stayPut) return
+            routine = null
+            velX = 0f
+            velY = 0f
+            ghost?.setMotion(0f, 0f)
+            clampIntoBounds()
+            applyPosition(force = true)
+        }
+
         /** True while his quick actions are open — see [tick]. */
         private var menuHeld = false
 
@@ -1587,6 +1620,24 @@ class GhostOverlayService : Service() {
         private fun tick(dt: Float) {
             val view = ghost ?: return
             if (dragging) return
+            // Kept where he was put. Everything that is not motion carries on — he breathes,
+            // blinks, reacts, speaks and sleeps; the behaviour engine still proposes things and
+            // [perform] still plays their faces and voices. Only the part that would carry him
+            // across the screen is skipped, which is also the part that costs a window relayout,
+            // so a pet standing still is close to free.
+            if (stayPut && !homing) {
+                // Anything that did set one — a flourish, an edge recovery — is dropped rather
+                // than left to hang, for the frame-budget reason spelled out in [perform].
+                routine = null
+                velX = 0f
+                velY = 0f
+                view.setMotion(0f, 0f)
+                if (clock > nextStatsTickAt) {
+                    nextStatsTickAt = clock + 10f
+                    refreshMood()
+                }
+                return
+            }
             // His quick actions are open beside him, anchored to where he is. Letting him drift on
             // would either drag the menu around under the finger reaching for it or leave it
             // pointing at empty screen. He waits; he keeps breathing, because the view advances
@@ -2176,6 +2227,7 @@ class GhostOverlayService : Service() {
         density = resources.displayMetrics.density
         touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         clickThrough = Prefs.clickThrough(this)
+        stayPut = Prefs.stayPut(this)
         moveThresholdPx = maxOf(1, density.toInt())
         refreshBounds()
 
@@ -2206,6 +2258,15 @@ class GhostOverlayService : Service() {
             // window there is.
             if (key == CLICK_THROUGH_KEY) {
                 if (Prefs.clickThrough(this) != clickThrough) recreateWindow()
+                return@OnSharedPreferenceChangeListener
+            }
+            if (key == STAY_PUT_KEY) {
+                // No rebuild: nothing about the window changes, only whether he is moved in it.
+                // Waking the loop is what makes it visible at once — he may be parked at eight
+                // frames a second, or stopped, when this is turned back off.
+                stayPut = Prefs.stayPut(this)
+                for (p in pets) p.settleForStayPut()
+                startLoop()
                 return@OnSharedPreferenceChangeListener
             }
             // Everything else per-pet arrives under a key with the slot on the end for every pet
@@ -2252,6 +2313,7 @@ class GhostOverlayService : Service() {
         for (p in pets) p.detach()
 
         clickThrough = Prefs.clickThrough(this)
+        stayPut = Prefs.stayPut(this)
         for (p in pets) p.attach(spawn = null)
 
         startLoop()

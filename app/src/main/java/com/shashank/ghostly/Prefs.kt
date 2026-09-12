@@ -25,6 +25,7 @@ object Prefs {
     private const val KEY_COLOR_HUE = "color_hue"
     private const val KEY_HAPTICS = "haptics"
     private const val KEY_CLICK_THROUGH = "click_through"
+    private const val KEY_STAY_PUT = "stay_put"
     private const val KEY_SPECIES = "species"
     private const val KEY_HUNGER = "hunger"
     private const val KEY_ENERGY = "energy"
@@ -186,6 +187,18 @@ object Prefs {
 
     fun setClickThrough(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_CLICK_THROUGH, value).apply()
+
+    /**
+     * When true he does not wander: he stays exactly where he was last put, and only moves when
+     * you drag him or call him home.
+     *
+     * An account setting, not a per-pet one. It is about how much of your screen he is allowed to
+     * be in front of, which is a decision about you rather than about him.
+     */
+    fun stayPut(context: Context): Boolean = prefs(context).getBoolean(KEY_STAY_PUT, false)
+
+    fun setStayPut(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(KEY_STAY_PUT, value).apply()
 
     fun hapticsEnabled(context: Context) = prefs(context).getBoolean(KEY_HAPTICS, true)
 

@@ -68,4 +68,6 @@
     <string name="quick_pet">Pet</string>
     <string name="quick_nap">Nap</string>
     <string name="quick_wake">Wake</string>
+    <string name="settings_stay_put">Keep him in one place</string>
+    <string name="settings_stay_put_body">Off, he drifts around the screen on his own. On, he stays exactly where you put him and only moves when you drag him — quieter to have around, and easier on the battery, since nothing has to move him.</string>
 </resources>
