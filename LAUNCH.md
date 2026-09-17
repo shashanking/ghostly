@@ -20,7 +20,7 @@ browser, so it is written as steps you can follow straight down the page.
 | `ghostly-release.jks` + `keystore.properties` | Your upload key — **back these up** |
 
 App identity, fixed at first upload and never changeable: **`com.shashank.ghostly`**. This build is
-version 1.2.0 (versionCode 5), min Android 8.0, targets API 36 (required for new apps since
+version 1.3.0 (versionCode 6), min Android 8.0, targets API 36 (required for new apps since
 31 Aug 2026).
 
 ### What changed since the 1.0.1 material was written
@@ -106,8 +106,8 @@ being stopped from its notification.
 
 - Upload `app/build/outputs/bundle/release/app-release.aab`
 - Keep **Play App Signing** enabled (the default)
-- Release name: `1.2.0 (5)` · Release notes: paste the **1.2.0** block from the **Release notes**
-  section of `play/store-listing.md` (499 characters — Play's limit is 500)
+- Release name: `1.3.0 (6)` · Release notes: paste the **1.3.0** block from the **Release notes**
+  section of `play/store-listing.md` (498 characters — Play's limit is 500)
 - **Countries/regions → select all** for a worldwide launch
 - Save → Review release → **Start rollout to Production** (100%)
 
@@ -122,7 +122,7 @@ First reviews typically take a few days, and longer for a brand-new developer ac
 
 ## Versioning
 
-This build is versionCode `5`, versionName `1.2.0`. Play rejects an upload whose versionCode it has
+This build is versionCode `6`, versionName `1.3.0`. Play rejects an upload whose versionCode it has
 seen before, so raise `versionCode` in `app/build.gradle.kts` for every upload — even a re-upload
 of a rejected build.
 

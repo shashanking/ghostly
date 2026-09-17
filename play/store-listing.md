@@ -85,7 +85,21 @@ short side. Raw 1080×2400 phone captures are 2.22:1 and get rejected — the on
 
 ## Release notes (What's new, max 500)
 
-### 1.2.0 (versionCode 5) — current
+### 1.3.0 (versionCode 6) — current
+
+```
+Hold him and his buttons come out. Feed him, play with him, pet him or put him
+down for a nap without leaving whatever app you are in — they appear in a ring
+around him, wherever he happens to be floating.
+
+He can also stay where he is put, if you would rather he did — there is a
+switch for it in Settings, and it costs less battery than letting him wander.
+
+And he no longer wanders indoors on his own. Feeding him from the app used to
+call him home; the treat now falls to him out there instead.
+```
+
+### 1.2.0 (versionCode 5) — never published
 
 ```
 Twelve kinds to choose from, every one properly drawn — ears, antlers, horns,
