@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -165,6 +166,10 @@ class GhostOverlayService : Service() {
 
         /** Air between him and the row of buttons, so the two read as separate things. */
         private const val MENU_GAP_DP = 10f
+
+        /** The same two the box drops, so a treat is the same object wherever he is fed. */
+        private val TREAT_COLOUR = Color.parseColor("#E8B84F")
+        private val GIFT_COLOUR = Color.parseColor("#E86BA8")
 
         /** Widest first — see [arcFor]. */
         private val SWEEP_CANDIDATES_DEG = floatArrayOf(270f, 230f, 190f, 150f, 110f, 80f)
@@ -483,6 +488,7 @@ class GhostOverlayService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    clearDrop()
                     // The menu is anchored to a pet who is about to stop moving behind a dark
                     // screen. Leaving it up means finding it again on unlock, over whatever is
                     // there by then.
@@ -551,6 +557,7 @@ class GhostOverlayService : Service() {
      * instant and none of his position or state is lost.
      */
     private fun setVisiting(visiting: Boolean) {
+        if (visiting) clearDrop()
         // He is stepping into the app's box, or out of it. Either way the menu is pointing at a
         // ghost who will not be there.
         if (visiting) closeQuickActions()
@@ -1455,8 +1462,7 @@ class GhostOverlayService : Service() {
                     // The app watches this key to play the same drop-and-eat in the box, and so
                     // does [noteEvent] out here — which is why the animation is not started twice.
                     Prefs.markFed(ctx, slot)
-                    ghost?.startEating()
-                    ghost?.showExpression(Expression.DELIGHTED, 2f)
+                    dropOn(this, IconGlyph.TREAT, TREAT_COLOUR) { eatIt() }
                 }
                 "play" -> when (Emotions.playWithToken(ctx, slot)) {
                     Emotions.PlayOutcome.SUCCESS -> playNow()
@@ -1486,11 +1492,15 @@ class GhostOverlayService : Service() {
             applyPosition(force = true)
         }
 
-        /** True while his quick actions are open — see [tick]. */
-        private var menuHeld = false
+        /** True while something of his is on screen and he should wait for it — see [tick]. */
+        private var parked = false
 
-        fun holdForMenu(held: Boolean, anchorX: Float, anchorY: Float) {
-            menuHeld = held
+        /**
+         * Stops him travelling while something of his is on screen — the ring of buttons, or a
+         * treat falling towards him. Both would otherwise be left pointing at where he used to be.
+         */
+        fun park(held: Boolean, anchorX: Float, anchorY: Float) {
+            parked = held
             menuAnchorX = anchorX
             menuAnchorY = anchorY
         }
@@ -1505,17 +1515,28 @@ class GhostOverlayService : Service() {
          */
         fun playReaction(reaction: String) {
             when (reaction) {
-                "eat" -> {
-                    ghost?.startEating()
-                    ghost?.showExpression(Expression.DELIGHTED, 2f)
-                }
+                "eat" -> dropOn(this, IconGlyph.TREAT, TREAT_COLOUR) { eatIt() }
                 "play" -> playNow()
-                "gift" -> {
-                    ghost?.startGiftJoy()
-                    ghost?.showExpression(Expression.DELIGHTED, 2.4f)
-                }
+                "gift" -> dropOn(this, IconGlyph.GIFT, GIFT_COLOUR) { unwrapIt() }
             }
             refreshMood()
+        }
+
+        /** What he does once the treat has actually reached him. */
+        fun eatIt() {
+            ghost?.startEating()
+            ghost?.showExpression(Expression.DELIGHTED, 2f)
+        }
+
+        fun unwrapIt() {
+            ghost?.startGiftJoy()
+            ghost?.showExpression(Expression.DELIGHTED, 2.4f)
+        }
+
+        /** Eyes up, following it down. Half the charm of the drop is that he sees it coming. */
+        fun watchTheDrop() {
+            ghost?.lookAt(0f, -1f)
+            ghost?.notice()
         }
 
         /** A small look-up as the buttons unfurl, so the menu reads as his and not the system's. */
@@ -1711,7 +1732,7 @@ class GhostOverlayService : Service() {
             // would either drag the menu around under the finger reaching for it or leave it
             // pointing at empty screen. He waits; he keeps breathing, because the view advances
             // whatever this does.
-            if (menuHeld) {
+            if (parked) {
                 velX = 0f
                 velY = 0f
                 view.setMotion(0f, 0f)
@@ -2266,6 +2287,7 @@ class GhostOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        clearDrop()
         // Torn down rather than dismissed: the animation would be running against a view whose
         // service is already going, and a window left behind by a dead service is not recoverable.
         menuView?.let { view ->
@@ -2534,7 +2556,7 @@ class GhostOverlayService : Service() {
         }
         view.reveal()
         owner.perkUp()
-        owner.holdForMenu(true, cx, cy)
+        owner.park(true, cx, cy)
         // It is sitting on top of somebody else's app. If it is not being used it should go.
         handler.postDelayed(menuTimeout, MENU_IDLE_MS)
     }
@@ -2634,7 +2656,7 @@ class GhostOverlayService : Service() {
         if (menuClosing) return
         menuClosing = true
         handler.removeCallbacks(menuTimeout)
-        menuOwner?.holdForMenu(false, 0f, 0f)
+        menuOwner?.park(false, 0f, 0f)
         view.dismiss {
             runCatching { windowManager.removeView(view) }
             if (menuView === view) {
@@ -2644,6 +2666,88 @@ class GhostOverlayService : Service() {
             }
             menuClosing = false
         }
+    }
+
+    /**
+     * Drops a treat onto him where he floats, then lets him have it.
+     *
+     * His box has done this since the beginning — something falls in and he goes and eats it — and
+     * feeding him out here used to borrow it by flying him indoors for the occasion. It does not
+     * any more, so the drop had to come out here too; without it a feed was just a chew, and the
+     * nicest part of feeding him had quietly gone missing.
+     *
+     * One at a time, service-wide. Two treats falling on two pets is fine in principle and simply
+     * is not worth a second window until there are two pets to feed.
+     */
+    private fun dropOn(owner: FloatingPet, glyph: IconGlyph, tint: Int, take: () -> Unit) {
+        if (dropView != null) {
+            // Already mid-drop: give him the second one straight away rather than queue or drop it.
+            take()
+            return
+        }
+        val view = TreatDropView(this)
+        view.setItem(glyph, tint)
+        val w = view.desiredWidth()
+        val h = view.desiredHeight()
+        if (w <= 0 || h <= 0) {
+            take()
+            return
+        }
+        val lp = WindowManager.LayoutParams(
+            w,
+            h,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // Nothing here is ever touched, so it is intangible like his own window — and carries
+            // the same alpha for the same tapjacking reason. A falling treat that swallowed a tap
+            // would be a worse bargain than no falling treat.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            alpha = 0.8f
+        }
+        // Bottom edge on his crown, so the item lands on him rather than in front of him.
+        lp.x = (owner.bodyCentreX() - w / 2f).toInt()
+        lp.y = (owner.bodyCentreY() - owner.bodyHalfPx() - h).toInt()
+
+        view.onLanded = { take() }
+        view.onFinished = {
+            runCatching { windowManager.removeView(view) }
+            if (dropView === view) {
+                dropView = null
+                dropOwner?.park(false, 0f, 0f)
+                dropOwner = null
+            }
+        }
+        dropView = view
+        dropOwner = owner
+        val added = runCatching { windowManager.addView(view, lp) }.isSuccess
+        if (!added) {
+            dropView = null
+            dropOwner = null
+            take()
+            return
+        }
+        // He waits for it, and watches it come down.
+        owner.park(true, owner.bodyCentreX(), owner.bodyCentreY())
+        owner.watchTheDrop()
+        view.drop()
+    }
+
+    private var dropView: TreatDropView? = null
+    private var dropOwner: FloatingPet? = null
+
+    /** Takes a falling treat down without ceremony — the service is going, or the screen is off. */
+    private fun clearDrop() {
+        val view = dropView ?: return
+        dropView = null
+        dropOwner?.park(false, 0f, 0f)
+        dropOwner = null
+        runCatching { windowManager.removeView(view) }
     }
 
     // endregion
