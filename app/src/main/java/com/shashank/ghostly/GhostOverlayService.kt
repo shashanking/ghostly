@@ -73,6 +73,16 @@ class GhostOverlayService : Service() {
         const val ACTION_COME_HOME = "com.shashank.ghostly.COME_HOME"
 
         /**
+         * Something was done to him in the app while he was out here — see [react].
+         *
+         * The app used to fly him into his box for these, which is what made him appear to wander
+         * back indoors on his own. He stays where he is now and the reaction comes to him.
+         */
+        const val ACTION_REACT = "com.shashank.ghostly.REACT"
+        const val EXTRA_REACTION = "reaction"
+        const val EXTRA_SLOT = "slot"
+
+        /**
          * Where his body's top-left should be, in screen pixels. Carried on a start, on the end of
          * a visit and on [ACTION_COME_HOME], so that he appears exactly where the app last drew
          * him instead of popping into being somewhere else.
@@ -249,6 +259,25 @@ class GhostOverlayService : Service() {
                 }
                 if (idleClock != null) intent.putExtra(EXTRA_IDLE_CLOCK, idleClock)
                 context.startService(intent)
+            }
+        }
+
+        /**
+         * Plays a reaction on the pet who is already floating: he has been fed, played with or
+         * given something from inside the app, and none of that is a reason to move him.
+         *
+         * The stat changes have already been applied by the caller — this is the animation only,
+         * so nothing is counted twice.
+         */
+        fun react(context: Context, reaction: String, slot: Int = PetStore.PRIMARY_SLOT) {
+            if (!isRunning) return
+            runCatching {
+                context.startService(
+                    Intent(context, GhostOverlayService::class.java)
+                        .setAction(ACTION_REACT)
+                        .putExtra(EXTRA_REACTION, reaction)
+                        .putExtra(EXTRA_SLOT, slot)
+                )
             }
         }
 
@@ -1451,6 +1480,25 @@ class GhostOverlayService : Service() {
             menuHeld = held
         }
 
+        /**
+         * The visible half of something the app already did to him. Stats and tokens were settled
+         * there; this is only what it looks like out here.
+         */
+        fun playReaction(reaction: String) {
+            when (reaction) {
+                "eat" -> {
+                    ghost?.startEating()
+                    ghost?.showExpression(Expression.DELIGHTED, 2f)
+                }
+                "play" -> playNow()
+                "gift" -> {
+                    ghost?.startGiftJoy()
+                    ghost?.showExpression(Expression.DELIGHTED, 2.4f)
+                }
+            }
+            refreshMood()
+        }
+
         /** A small look-up as the buttons unfurl, so the menu reads as his and not the system's. */
         fun perkUp() {
             ghost?.notice()
@@ -1468,7 +1516,9 @@ class GhostOverlayService : Service() {
             noteInteraction(PetEvent.PLAYED)
             ghost?.startWiggle()
             ghost?.showExpression(Expression.DELIGHTED, 2.2f)
-            launch(Random.nextFloat() * 2f * PI.toFloat())
+            // The wiggle is the play; the dash across the screen is optional, and someone who
+            // asked for him to stay in one place did not ask for an exception when he is happy.
+            if (!stayPut) launch(Random.nextFloat() * 2f * PI.toFloat())
         }
 
         /** Puts him down for a nap, or stirs him if he is already having one. */
@@ -2140,6 +2190,13 @@ class GhostOverlayService : Service() {
                 intent.adoptIdleClock()
             }
             setVisiting(visiting)
+            return START_STICKY
+        }
+
+        if (intent?.action == ACTION_REACT) {
+            val reaction = intent.getStringExtra(EXTRA_REACTION)
+            val slot = intent.getIntExtra(EXTRA_SLOT, PetStore.PRIMARY_SLOT)
+            if (reaction != null) pets.firstOrNull { it.slot == slot }?.playReaction(reaction)
             return START_STICKY
         }
 

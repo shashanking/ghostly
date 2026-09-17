@@ -460,7 +460,7 @@ class MainActivity : Activity() {
             pulse(hungerBar)
             refreshNeeds()
             // The treat drops once he is actually in the box — he may still be flying in.
-            visitBox { playground.startFeeding() }
+            if (!reactOutThere("eat")) visitBox { playground.startFeeding() }
         }
         actionsRow.addView(feed.root)
 
@@ -469,7 +469,7 @@ class MainActivity : Activity() {
                 Emotions.PlayOutcome.SUCCESS -> {
                     refreshNeeds()
                     pulse(playground)
-                    visitBox { playground.startFetch() }
+                    if (!reactOutThere("play")) visitBox { playground.startFetch() }
                 }
                 Emotions.PlayOutcome.NO_TOKENS -> toastNoTokens()
                 Emotions.PlayOutcome.TOO_TIRED ->
@@ -617,15 +617,17 @@ class MainActivity : Activity() {
             if (Emotions.giveTreat(this@MainActivity)) {
                 pulse(treatCard)
                 Prefs.markFed(this@MainActivity)
-                // The animation plays in his box on the Home tab — jump there so it is actually
-                // seen rather than happening silently behind the Shop page, and call him in for
-                // it if he is out floating, or the treat drops into an empty box.
-                showTab(AppTab.HOME)
                 refreshNeeds()
-                // After the tab switch the box has only just been made visible: it has no position
-                // on screen until it has been laid out, and calling him to a box at 0,0 sends him
-                // to the wrong place. One frame is all it needs.
-                playground.post { visitBox { playground.startFeeding() } }
+                // Out floating, he eats it where he is and the Shop tab stays put — there is
+                // nothing on the Home tab to go and look at, because he is not in the box.
+                if (!reactOutThere("eat")) {
+                    // Home, so the treat falls in his box. Jump there or the animation plays
+                    // silently behind the Shop page.
+                    showTab(AppTab.HOME)
+                    // After the tab switch the box has only just been made visible: it has no
+                    // position on screen until it has been laid out. One frame is all it needs.
+                    playground.post { visitBox { playground.startFeeding() } }
+                }
             } else {
                 toastNoTokens()
             }
@@ -640,9 +642,11 @@ class MainActivity : Activity() {
         ) {
             if (Emotions.giveGift(this@MainActivity)) {
                 pulse(giftCard)
-                showTab(AppTab.HOME)
                 refreshNeeds()
-                playground.post { visitBox { playground.startGift() } }
+                if (!reactOutThere("gift")) {
+                    showTab(AppTab.HOME)
+                    playground.post { visitBox { playground.startGift() } }
+                }
             } else {
                 toastNoTokens()
             }
@@ -1698,6 +1702,24 @@ class MainActivity : Activity() {
             }
         }
         step.run()
+    }
+
+    /**
+     * He is out floating: play the reaction out there rather than calling him in for it.
+     *
+     * Returns false when he is not out, so the caller falls back to the box — which is still where
+     * this happens when he is already home, and still where the toy and the falling treat live.
+     *
+     * This is the fix for him appearing to wander back into the app on his own. Every one of these
+     * used to go through [visitBox], so feeding him from the Home tab flew him in from wherever he
+     * was, held him for six seconds and sent him back out. Nothing was wrong with it except that
+     * nobody asked for it, and the quick actions made it unnecessary: the overlay can do all of
+     * this where he stands.
+     */
+    private fun reactOutThere(reaction: String): Boolean {
+        if (!GhostOverlayService.isRunning || visiting) return false
+        GhostOverlayService.react(this, reaction)
+        return true
     }
 
     /**
