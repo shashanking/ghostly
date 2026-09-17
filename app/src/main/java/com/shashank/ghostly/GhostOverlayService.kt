@@ -165,6 +165,19 @@ class GhostOverlayService : Service() {
 
         /** Air between him and the row of buttons, so the two read as separate things. */
         private const val MENU_GAP_DP = 10f
+
+        /** Widest first — see [arcFor]. */
+        private val SWEEP_CANDIDATES_DEG = floatArrayOf(270f, 230f, 190f, 150f, 110f, 80f)
+
+        /**
+         * Degrees to swing the arc off the open direction, nearest first.
+         *
+         * Narrowing alone is not enough against a screen edge: the band of angles that keeps every
+         * button on screen is not always centred on the way out into the open, and a sweep that
+         * would fit somewhere can still fail where it was first pointed.
+         */
+        private val ARC_NUDGE_DEG =
+            floatArrayOf(0f, 15f, -15f, 30f, -30f, 45f, -45f, 60f, -60f, 90f, -90f, 120f, -120f, 180f)
         private const val PET_ANIMATION_MS = 2_000L
         private const val DOUBLE_TAP_MS = 300L
 
@@ -1476,9 +1489,15 @@ class GhostOverlayService : Service() {
         /** True while his quick actions are open — see [tick]. */
         private var menuHeld = false
 
-        fun holdForMenu(held: Boolean) {
+        fun holdForMenu(held: Boolean, anchorX: Float, anchorY: Float) {
             menuHeld = held
+            menuAnchorX = anchorX
+            menuAnchorY = anchorY
         }
+
+        /** Where his body's centre should be while the ring is open — usually where it already is. */
+        private var menuAnchorX = 0f
+        private var menuAnchorY = 0f
 
         /**
          * The visible half of something the app already did to him. Stats and tokens were settled
@@ -1696,6 +1715,18 @@ class GhostOverlayService : Service() {
                 velX = 0f
                 velY = 0f
                 view.setMotion(0f, 0f)
+                // Almost always already there, and then this costs a subtraction. Only a ghost in
+                // a corner has anywhere to go — the ring cannot fit around him there, so he glides
+                // out into the open while the buttons unfurl. A jump would read as him being
+                // yanked; an ease reads as him stepping aside to make room.
+                val dx = menuAnchorX - bodyCentreX()
+                val dy = menuAnchorY - bodyCentreY()
+                if (abs(dx) > 0.5f || abs(dy) > 0.5f) {
+                    val settle = 1f - exp(-9f * dt)
+                    posX += dx * settle
+                    posY += dy * settle
+                    applyPosition()
+                }
                 return
             }
 
@@ -2439,28 +2470,50 @@ class GhostOverlayService : Service() {
     private fun openQuickActions(owner: FloatingPet) {
         if (menuView != null) return
         val view = QuickActionsView(this)
-        // Sizing reads the actions, so they have to be in before the window is measured.
-        view.setActions(actionsFor(owner))
-        val w = view.desiredWidth()
-        val h = view.desiredHeight()
-        if (w <= 0 || h <= 0) return
+        // Sizing reads both, so they have to be in before the window is measured.
+        val actions = actionsFor(owner)
+        view.setActions(actions)
+        val clearance = owner.bodyHalfPx()
+        val ringRadius = QuickActionsView.ringRadiusPx(density, clearance)
+        // Where he is, unless that leaves the ring no room — then where he is about to be.
+        var cx = owner.bodyCentreX()
+        var cy = owner.bodyCentreY()
+        var (arcCentre, arcSweep) = arcFor(owner, actions.size, ringRadius, cx, cy)
+        val buttonHalf = QuickActionsView.BUTTON_DP * density / 2f
+        if (!arcFits(cx, cy, arcCentre, arcSweep, actions.size, ringRadius, buttonHalf)) {
+            val anchor = menuAnchor(owner, ringRadius)
+            cx = anchor[0]
+            cy = anchor[1]
+            val re = arcFor(owner, actions.size, ringRadius, cx, cy)
+            arcCentre = re.first
+            arcSweep = re.second
+        }
+        view.setArc(arcCentre, arcSweep, clearance)
+        val span = view.desiredSpan()
+        if (span <= 0) return
 
         val lp = WindowManager.LayoutParams(
-            w,
-            h,
+            span,
+            span,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             // Touchable, unlike everything else this service puts up: it has buttons. Not
             // focusable, so it never takes the keyboard off whatever is underneath.
             // FLAG_WATCH_OUTSIDE_TOUCH is what lets a tap anywhere else close it.
+            // FLAG_LAYOUT_NO_LIMITS so the window may hang off the edge of the screen: it is
+            // square and centred on him, and he is allowed to stand at the very edge. Keeping it
+            // centred is what makes the buttons read as being arranged around him, so the overflow
+            // is accepted and [arcFor] is what keeps the buttons themselves in view.
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
         }
-        placeMenu(lp, owner, w, h)
+        lp.x = (cx - span / 2f).toInt()
+        lp.y = (cy - span / 2f).toInt()
 
         view.onPick = { action ->
             owner.runQuickAction(action.id)
@@ -2481,36 +2534,78 @@ class GhostOverlayService : Service() {
         }
         view.reveal()
         owner.perkUp()
-        owner.holdForMenu(true)
+        owner.holdForMenu(true, cx, cy)
         // It is sitting on top of somebody else's app. If it is not being used it should go.
         handler.postDelayed(menuTimeout, MENU_IDLE_MS)
     }
 
     /**
-     * Beside him, on whichever side has room, with the buttons level with his middle.
+     * Which way the arc of buttons faces, and how far round him it wraps.
      *
-     * The buttons occupy the top of the window rather than its centre — the labels hang below them
-     * — so lining the row up with him means offsetting by half a button plus the padding above it,
-     * not by half the window.
+     * Centred on the direction of open screen — the way to the middle of the usable area — because
+     * that is the side the buttons have room on and the side a thumb comes from. A ghost sitting
+     * against the left edge gets his buttons curving round his right, not half of them off-screen.
+     *
+     * The widest sweep that fits wins. Tried from widest down rather than solved for: the test is
+     * cheap, there are six candidates, and a closed form would have to account for the arc's
+     * endpoints, the button radius and a rectangle's corners at once. Two hundred and seventy
+     * degrees is as far as it goes — a full circle would put a button behind him with no gap
+     * between first and last, which reads as a broken ring rather than a closed one.
      */
-    private fun placeMenu(lp: WindowManager.LayoutParams, owner: FloatingPet, w: Int, h: Int) {
-        val gap = MENU_GAP_DP * density
-        val leftOf = owner.bodyCentreX() - owner.bodyHalfPx() - gap - w
-        val rightOf = owner.bodyCentreX() + owner.bodyHalfPx() + gap
-        // His own side of the screen first: a menu that opens away from the edge he is clinging to
-        // is the one that fits.
-        lp.x = if (rightOf + w <= usable.right) {
-            rightOf.toInt()
-        } else if (leftOf >= usable.left) {
-            leftOf.toInt()
-        } else {
-            // Nowhere beside him: centre it on him and let the clamp below sort it out.
-            (owner.bodyCentreX() - w / 2f).toInt()
+    private fun arcFor(owner: FloatingPet, count: Int, ringRadius: Float, cx: Float, cy: Float): Pair<Float, Float> {
+        val toOpenX = usable.centerX() - cx
+        val toOpenY = usable.centerY() - cy
+        // Dead centre of the screen: every direction is as good as every other, so pick up.
+        val inward =
+            if (hypot(toOpenX, toOpenY) < 1f) -PI.toFloat() / 2f else atan2(toOpenY, toOpenX)
+        val buttonHalf = QuickActionsView.BUTTON_DP * density / 2f
+        for (degrees in SWEEP_CANDIDATES_DEG) {
+            val sweep = degrees * PI.toFloat() / 180f
+            for (nudge in ARC_NUDGE_DEG) {
+                val centre = inward + nudge * PI.toFloat() / 180f
+                if (arcFits(cx, cy, centre, sweep, count, ringRadius, buttonHalf)) return centre to sweep
+            }
         }
-        val buttonCentreFromTop = (QuickActionsView.PAD_DP + QuickActionsView.BUTTON_DP / 2f) * density
-        lp.y = (owner.bodyCentreY() - buttonCentreFromTop).toInt()
-        lp.x = lp.x.coerceIn(usable.left, (usable.right - w).coerceAtLeast(usable.left))
-        lp.y = lp.y.coerceIn(usable.top, (usable.bottom - h).coerceAtLeast(usable.top))
+        return inward to (SWEEP_CANDIDATES_DEG.last() * PI.toFloat() / 180f)
+    }
+
+    /**
+     * Where the ring wants to be centred, which is on him unless he is in a corner.
+     *
+     * Wedged into one, the band of angles that keeps a button on screen narrows to about seventy
+     * degrees, and four buttons on a ring this size need a good deal more arc than that. Nothing
+     * about rotating or narrowing recovers it — there is simply not room beside him.
+     *
+     * So he steps out into the open instead, far enough that the whole ring fits, and the buttons
+     * bloom around him there. It is a deliberate gesture being answered, not him wandering off, and
+     * he glides rather than jumps — see the hold in [FloatingPet.tick]. Everywhere else, including
+     * flat against an edge, a narrower arc fits where he already is and he does not move at all.
+     */
+    private fun menuAnchor(owner: FloatingPet, ringRadius: Float): FloatArray {
+        val inset = ringRadius + QuickActionsView.BUTTON_DP * density / 2f
+        val x = owner.bodyCentreX().coerceIn(usable.left + inset, usable.right - inset)
+        val y = owner.bodyCentreY().coerceIn(usable.top + inset, usable.bottom - inset)
+        return floatArrayOf(x, y)
+    }
+
+    /** True when every button on this arc lands inside the usable screen, whole. */
+    private fun arcFits(
+        cx: Float,
+        cy: Float,
+        centre: Float,
+        sweep: Float,
+        count: Int,
+        ringRadius: Float,
+        buttonHalf: Float,
+    ): Boolean {
+        for (i in 0 until count) {
+            val angle = QuickActionsView.angleOf(i, count, centre, sweep)
+            val bx = cx + cos(angle) * ringRadius
+            val by = cy + sin(angle) * ringRadius
+            if (bx - buttonHalf < usable.left || bx + buttonHalf > usable.right) return false
+            if (by - buttonHalf < usable.top || by + buttonHalf > usable.bottom) return false
+        }
+        return true
     }
 
     /** What he can be offered right now. A greyed button says more than a missing one. */
@@ -2539,7 +2634,7 @@ class GhostOverlayService : Service() {
         if (menuClosing) return
         menuClosing = true
         handler.removeCallbacks(menuTimeout)
-        menuOwner?.holdForMenu(false)
+        menuOwner?.holdForMenu(false, 0f, 0f)
         view.dismiss {
             runCatching { windowManager.removeView(view) }
             if (menuView === view) {
