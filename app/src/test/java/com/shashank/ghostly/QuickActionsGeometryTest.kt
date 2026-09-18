@@ -132,15 +132,12 @@ class QuickActionsGeometryTest {
     }
 
     @Test
-    fun `the square holds every button and its widest label, at any angle`() {
+    fun `the square holds every button, at any angle`() {
         for (d in densities) {
             for (clearance in clearances) {
                 val half = QuickActionsView.halfSpanPx(d, clearance)
                 val ring = QuickActionsView.ringRadiusPx(d, clearance)
-                val labelRing = QuickActionsView.labelRadiusPx(d, clearance)
                 val r = QuickActionsView.BUTTON_DP * d / 2f
-                val pillW = QuickActionsView.pillWidthPx(d)
-                val pillH = QuickActionsView.pillHeightPx(d)
 
                 // Every angle, not only the ones the service picks: the window is committed before
                 // the arc is chosen, so it has to survive the worst one.
@@ -149,10 +146,6 @@ class QuickActionsGeometryTest {
                     val bx = abs(ring * cos(a)) + r
                     val by = abs(ring * sin(a)) + r
                     assertTrue("button clipped at ${d}x", bx <= half && by <= half)
-
-                    val lx = abs(labelRing * cos(a)) + pillW / 2f
-                    val ly = abs(labelRing * sin(a)) + pillH / 2f
-                    assertTrue("label clipped at ${d}x, ${clearance}px body", lx <= half && ly <= half)
                     a += 0.05f
                 }
             }
@@ -160,16 +153,18 @@ class QuickActionsGeometryTest {
     }
 
     @Test
-    fun `labels ride further out than the buttons they belong to`() {
-        // This is what buys neighbouring captions their separation on a tight arc: the same angle
-        // between two buttons is more distance between two labels one pill-height further out.
+    fun `dropping the captions is what made the window small`() {
+        // The captions rode a circle outside the buttons and the square had to reserve the widest
+        // one at whichever angle it landed, which was most of the window. The span is now the ring
+        // and one button, and this pins it: anything that creeps back into the sizing shows up as
+        // a window bigger than the thing it draws.
         for (d in densities) {
             for (clearance in clearances) {
+                val half = QuickActionsView.halfSpanPx(d, clearance)
                 val ring = QuickActionsView.ringRadiusPx(d, clearance)
-                val labelRing = QuickActionsView.labelRadiusPx(d, clearance)
-                val clearOfButton = ring + QuickActionsView.BUTTON_DP * d / 2f
-                val pillNearEdge = labelRing - QuickActionsView.pillHeightPx(d) / 2f
-                assertTrue("label overlaps its own button at ${d}x", pillNearEdge >= clearOfButton - 0.01f)
+                val r = QuickActionsView.BUTTON_DP * d / 2f
+                val pad = QuickActionsView.PAD_DP * d
+                assertEquals("span is no longer ring + button + pad at ${d}x", ring + r + pad, half, 0.01f)
             }
         }
     }

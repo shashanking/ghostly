@@ -3,10 +3,7 @@ package com.shashank.ghostly
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.RectF
 import android.os.SystemClock
-import android.text.TextPaint
-import android.text.TextUtils
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
@@ -47,10 +44,6 @@ class QuickActionsView(context: Context) : View(context) {
          *  menu sits on top of somebody else's app, so it should cover as little of it as it can. */
         const val BUTTON_DP = 44f
 
-        /** Minimum clear space between two neighbouring label pills. Below this they read as one
-         *  smeared bar rather than two captions, which is what [relabel] trims text to avoid. */
-        const val GAP_DP = 8f
-
         /**
          * Clear space between the ghost's body and the near edge of a button.
          *
@@ -59,35 +52,12 @@ class QuickActionsView(context: Context) : View(context) {
          */
         const val RING_GAP_DP = 14f
 
-        /** Breathing room between a button and its label pill. */
+        /** How far a finger may miss a button and still count — see [hitRadiusPx]. */
         const val LABEL_GAP_DP = 4f
-        const val LABEL_DP = 9f
 
-        /** How wide a label is ever allowed to get, before the arc trims it further. Fixed rather
-         *  than measured, for the same reason the line box below is. */
-        const val LABEL_MAX_DP = 56f
-
-        /** The pill's inset around its text. Horizontal is generous and vertical is mean on
-         *  purpose: a short caption needs end caps to look deliberate, not a thicker bar. */
-        const val PILL_PAD_H_DP = 5f
-        const val PILL_PAD_V_DP = 2f
-
-        /** Margin between the outermost pill and the window edge, so an antialiased rounded end
-         *  never lands on the clip boundary and comes out as a flat cut. */
+        /** Margin between the outermost button and the window edge, so an antialiased circle never
+         *  lands on the clip boundary and comes out as a flat cut. */
         const val PAD_DP = 10f
-
-        /**
-         * The label's line box, fixed rather than measured.
-         *
-         * The window is sized before the view has ever drawn — and on some devices before it is
-         * attached at all — so asking a [Paint] for its font metrics here would size the window
-         * from whichever face happened to have loaded. A fixed box keeps [halfSpanPx] a pure
-         * function of density, and the baseline is placed inside it by the same constant.
-         */
-        const val LABEL_LINE_DP = LABEL_DP * 1.35f
-
-        /** Where the baseline sits inside that box, down from its top. */
-        private const val LABEL_BASELINE_DP = LABEL_DP * 1.05f
 
         /**
          * Where button [index] of [count] sits on an arc of [sweep] radians centred on [centre].
@@ -103,43 +73,26 @@ class QuickActionsView(context: Context) : View(context) {
         fun ringRadiusPx(density: Float, clearancePx: Float): Float =
             clearancePx + (RING_GAP_DP + BUTTON_DP / 2f) * density
 
-        /** The pill's box. Height is fixed; width is the *widest* a pill may ever be — [relabel]
-         *  may trim a label to less, but never draws one wider, which is what lets the window be
-         *  sized before a single character has been measured. */
-        fun pillHeightPx(density: Float): Float = (LABEL_LINE_DP + PILL_PAD_V_DP * 2f) * density
-
-        fun pillWidthPx(density: Float): Float = (LABEL_MAX_DP + PILL_PAD_H_DP * 2f) * density
-
-        /** Radius of the circle the label pills' centres sit on — one pill-height further out than
-         *  the buttons. See [relabel] for why labels go outward rather than straight down. */
-        fun labelRadiusPx(density: Float, clearancePx: Float): Float =
-            ringRadiusPx(density, clearancePx) +
-                (BUTTON_DP / 2f + LABEL_GAP_DP) * density + pillHeightPx(density) / 2f
-
         /**
-         * Half the view's span: ring + button + label, so the view is square and its centre is the
-         * ghost.
+         * Half the view's span: the ring plus a button, so the view is square and its centre is
+         * the ghost.
          *
-         * Worst case over every angle, deliberately. A pill at the side of the ring sticks out by
-         * half its width, one at the top by half its height, and the window is committed before the
-         * arc is known to be either — so the span assumes the wider of the two at full radius. It
-         * costs some empty window, and empty window here is transparent and only swallows touches
-         * (see [buttonAt]); a clipped label would cost a letter.
+         * The captions used to live out past this and they dominated it — the window was 687px on
+         * a 1080px screen, most of it reserved for the widest a caption might turn out to be at
+         * whichever angle it landed. Icons alone, it is nearer 420. Every pixel here is composited
+         * over whatever app you were looking at, so that is most of the cost of the menu gone for
+         * four words nobody needed: an apple, a triangle, a heart and a moon say it already.
          */
         fun halfSpanPx(density: Float, clearancePx: Float): Float =
-            labelRadiusPx(density, clearancePx) +
-                maxOf(pillWidthPx(density), pillHeightPx(density)) / 2f +
-                PAD_DP * density
+            ringRadiusPx(density, clearancePx) + (BUTTON_DP / 2f + PAD_DP) * density
 
         /**
          * How close to a button's centre a finger counts as hitting it.
          *
-         * Bigger than the circle, because people aim at the caption as much as the icon, and it may
-         * safely overlap a neighbour's: [buttonAt] takes the *nearest* centre, so an overlap is an
-         * ordering, not an ambiguity.
+         * Comfortably past the circle, and it may safely overlap a neighbour's: [buttonAt] takes
+         * the *nearest* centre, so an overlap is an ordering, not an ambiguity.
          */
-        fun hitRadiusPx(density: Float): Float =
-            (BUTTON_DP / 2f + LABEL_GAP_DP + LABEL_LINE_DP / 2f) * density
+        fun hitRadiusPx(density: Float): Float = (BUTTON_DP / 2f + LABEL_GAP_DP) * density
 
         /** How much of the button's diameter the glyph fills. Any more and the icons touch the
          *  circle's edge, which at this size reads as a smudge rather than a symbol. */
@@ -175,40 +128,23 @@ class QuickActionsView(context: Context) : View(context) {
      * and a bone circle on a white page is invisible. Beside him that was solved with one
      * near-opaque plate behind the whole row; centred on him a plate would cover the ghost, which
      * is the one thing this layout exists to show. So the contrast is carried per button instead:
-     * the filled [Palette.bone] circle is its own plate, and the label — small white text, the part
-     * that actually dies over a busy wallpaper — gets a [Palette.ink] pill with the app's
-     * [Palette.cardStroke] hairline. Everything between them stays transparent.
+     * each filled [Palette.bone] circle is its own plate, with an ink glyph on it, and everything
+     * between them stays transparent.
+     *
+     * That leaves a bone circle on a pale background as the one weak case, and it is survivable —
+     * the glyph inside it is ink, so the symbol reads even where its plate does not.
      *
      * `setShadowLayer` is banned in [GhostView] because it drags the whole view through software
      * rendering on every one of its thirty frames a second. This view is static once revealed, so
      * that argument does not apply here directly — but the frames it *does* draw are the entry and
      * exit animations, which are exactly the frames that have to feel instant under a finger. A
-     * soft shadow would tax only those. It buys nothing the pill does not already give, so it is
-     * still not worth having.
+     * soft shadow would tax only those, and buy little enough that it is still not worth having.
      */
-    private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Palette.ink
-        alpha = 232
-    }
-    private val pillStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = Palette.cardStroke
-        strokeWidth = density
-    }
     private val buttonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.bone }
 
     /** A pressed button goes down to the dimmer bone rather than growing a ring — a ring at this
      *  size reads as a second, smaller button. */
     private val pressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.accentDeep }
-
-    private val labelPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Palette.bone
-        textAlign = Paint.Align.CENTER
-        textSize = LABEL_DP * density
-        typeface = Type.sansMedium(context)
-    }
-
-    private val rect = RectF()
 
     private var actions: List<QuickAction> = emptyList()
 
@@ -217,15 +153,6 @@ class QuickActionsView(context: Context) : View(context) {
      *  canvas is walked to the button, so a change of arc never has to touch them. */
     private var icons: Array<IconDrawable> = emptyArray()
     private var iconSide = 0
-
-    /** Labels trimmed in [relabel]. Pre-ellipsized rather than clipped at draw time: [onDraw] runs
-     *  under a finger and must not measure text, and a label clipped by the canvas loses its last
-     *  glyph mid-stroke, which reads as a rendering fault rather than an abbreviation. */
-    private var labels: Array<String> = emptyArray()
-
-    /** Each trimmed label's width, measured once in [relabel]. [onDraw] runs every frame of the
-     *  unfurl and has no business asking a [Paint] to measure anything. */
-    private var labelWidths: FloatArray = FloatArray(0)
 
     /** The arc, until [setArc] says otherwise: a half-circle above him, hugging nothing. Sane
      *  defaults only so a caller that forgets still draws something recognisable. */
@@ -257,8 +184,12 @@ class QuickActionsView(context: Context) : View(context) {
         icons = Array(actions.size) { i ->
             IconDrawable(actions[i].glyph, Palette.ink).apply { setBounds(0, 0, iconSide, iconSide) }
         }
-        relabel()
         pressed = -1
+        // The captions are not drawn any more — an apple, a triangle, a heart and a moon say it
+        // without them, and the room they took was most of the window. They are still carried on
+        // [QuickAction] and spoken here, because an icon-only control that says nothing to a screen
+        // reader is a control those users do not have.
+        contentDescription = actions.joinToString(", ") { it.label }
         requestLayout()
         invalidate()
     }
@@ -279,49 +210,8 @@ class QuickActionsView(context: Context) : View(context) {
         this.clearancePx = clearancePx
         // The trim depends on how close the neighbours ended up, so it has to be redone here and
         // not only in setActions.
-        relabel()
         requestLayout()
         invalidate()
-    }
-
-    /**
-     * Labels, trimmed to whatever room this particular arc left them.
-     *
-     * A row gave every label a cell of its own. An arc does not: squeeze four buttons into a narrow
-     * sweep and neighbouring captions overlap, which is worse than useless — two half-words on top
-     * of each other say less than one. Two things keep them apart.
-     *
-     * First, a label sits *radially outward* from its button rather than always below it. Outward
-     * is free separation — the labels ride a bigger circle than the buttons, so the same angle buys
-     * more gap — and it also guarantees nothing is ever drawn between a button and the ghost, which
-     * is the part of the view that has to stay clear.
-     *
-     * Second, when the sweep is tight enough that even that is not enough, the text is ellipsized
-     * harder rather than the pill being moved further out or dropped. Pushing labels outward would
-     * grow the radius, and the window is square and centred on him, so every dp of radius costs
-     * four times its area in window that sits over someone else's app. "Fe…" under a bowl icon is
-     * still legible with the glyph right above it; a caption that has wandered a centimetre from
-     * its button is not obviously its caption at all.
-     *
-     * The floor is about two glyphs plus the ellipsis: below that the label says nothing and the
-     * pill is only clutter, and a sweep that tight is one the service should not have picked.
-     */
-    private fun relabel() {
-        val cap = pillWidthPx(density) - PILL_PAD_H_DP * 2f * density
-        val count = actions.size
-        var room = cap
-        if (count > 1) {
-            val step = abs(angleOf(1, count, centreAngleRad, sweepRad) - angleOf(0, count, centreAngleRad, sweepRad))
-            // Straight-line distance between neighbouring pill centres: the chord, not the arc, is
-            // what two horizontal pills actually have to share.
-            val chord = 2f * labelRadiusPx(density, clearancePx) * abs(sin(step / 2f))
-            val fit = chord - GAP_DP * density - PILL_PAD_H_DP * 2f * density
-            room = minOf(cap, fit).coerceAtLeast(LABEL_DP * 2.5f * density)
-        }
-        labels = Array(count) { i ->
-            TextUtils.ellipsize(actions[i].label, labelPaint, room, TextUtils.TruncateAt.END).toString()
-        }
-        labelWidths = FloatArray(count) { i -> labelPaint.measureText(labels[i]) }
     }
 
     /** Zero until [setActions] has been called — the service must set the actions before it sizes
@@ -433,11 +323,7 @@ class QuickActionsView(context: Context) : View(context) {
 
         val elapsed = SystemClock.uptimeMillis() - phaseStart
         val ring = ringRadiusPx(density, clearancePx)
-        val labelRing = labelRadiusPx(density, clearancePx)
         val r = BUTTON_DP * density / 2f
-        val pillH = pillHeightPx(density)
-        val baselineFromPillTop = (PILL_PAD_V_DP + LABEL_BASELINE_DP) * density
-        val strokeInset = pillStrokePaint.strokeWidth / 2f
         val count = actions.size
 
         for (i in 0 until count) {
@@ -450,29 +336,6 @@ class QuickActionsView(context: Context) : View(context) {
             val cx = ox + ring * cosA
             val cy = oy + ring * sinA
             val alpha = (255f * t * (if (action.enabled) 1f else DISABLED_ALPHA)).toInt().coerceIn(0, 255)
-
-            // The pill first, so where a tight arc does let one reach under a neighbouring button
-            // the button wins — it is the target, and it is the thing that must stay circular.
-            val label = labels[i]
-            if (label.isNotEmpty()) {
-                val pw = labelWidths[i] + PILL_PAD_H_DP * 2f * density
-                val px = ox + labelRing * cosA
-                val py = oy + labelRing * sinA
-                rect.set(
-                    px - pw / 2f + strokeInset,
-                    py - pillH / 2f + strokeInset,
-                    px + pw / 2f - strokeInset,
-                    py + pillH / 2f - strokeInset,
-                )
-                // The pill fades with the unfurl but is never dimmed for a disabled action: it is
-                // the background the text has to survive on, and dimming it dims the contrast too.
-                pillPaint.alpha = (232f * t).toInt()
-                pillStrokePaint.alpha = (255f * t).toInt()
-                canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, pillPaint)
-                canvas.drawRoundRect(rect, pillH / 2f, pillH / 2f, pillStrokePaint)
-                labelPaint.alpha = alpha
-                canvas.drawText(label, px, py - pillH / 2f + baselineFromPillTop, labelPaint)
-            }
 
             canvas.save()
             // Grown from the button's own centre, so a half-revealed arc is still a ring of buttons
