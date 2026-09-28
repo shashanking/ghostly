@@ -61,6 +61,9 @@ class GhostPlayground @JvmOverloads constructor(
      * ignoring the touch it asks whoever owns the box to bring him in for a moment.
      */
     var onSummon: (() -> Unit)? = null
+
+    /** He was petted — told to the screen so it can count towards the day's streak. */
+    var onPetted: (() -> Unit)? = null
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.parseColor("#3A3A46")
@@ -123,6 +126,10 @@ class GhostPlayground @JvmOverloads constructor(
     private var reactionEndsAt = 0f
     private val treatDrawable = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
     private val giftDrawable = IconDrawable(IconGlyph.GIFT, Color.parseColor("#E86BA8"))
+
+    /** A Shop treat falls in as itself — a cookie, a donut — rather than as the plain treat icon. */
+    private var deliveryEmoji: String? = null
+    private val emojiItemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
 
     private enum class DeliveryState { NONE, FALLING, CHASING, REACTING }
     private enum class DeliveryKind { TREAT, GIFT }
@@ -264,6 +271,8 @@ class GhostPlayground @JvmOverloads constructor(
      * floating never reached the ghost who came home.
      */
     fun applyLook() {
+        val outfit = Outfit.load(context)
+        if (ghost.outfit != outfit) ghost.outfit = outfit
         setSpecies(Prefs.species(context))
         setShade(Prefs.shade(context))
         setGhostSize((Prefs.sizeDp(context) * density).toInt())
@@ -324,11 +333,22 @@ class GhostPlayground @JvmOverloads constructor(
 
     /** Drops a treat from a corner for him to sprint after and eat — called on Feed/Treat. Purely
      *  a visual flourish; the actual stat effects are already applied by the time this runs. */
-    fun startFeeding() = startDelivery(DeliveryKind.TREAT)
+    fun startFeeding(emoji: String? = null) {
+        deliveryEmoji = emoji
+        startDelivery(DeliveryKind.TREAT)
+    }
+
+    /** Floats an emoji up off his head — the one he wears, unless told otherwise. */
+    fun popEmoji(emoji: String? = null, force: Boolean = false) {
+        if (emoji != null) ghost.popEmoji(emoji, force) else ghost.popEmoji(force = force)
+    }
 
     /** Drops a gift from a corner for him to sprint after and unwrap — called on Gift. Purely a
      *  visual flourish; the actual stat effects are already applied by the time this runs. */
-    fun startGift() = startDelivery(DeliveryKind.GIFT)
+    fun startGift() {
+        deliveryEmoji = null
+        startDelivery(DeliveryKind.GIFT)
+    }
 
     private fun startDelivery(kind: DeliveryKind) {
         if (!placed || width <= 0 || height <= 0) return
@@ -463,6 +483,7 @@ class GhostPlayground @JvmOverloads constructor(
         ghost.startPetting()
         ghost.showExpression(Expression.DELIGHTED, 2.4f)
         vocalise("happy")
+        onPetted?.invoke()
         // Still held: keep ticking affection for as long as the finger stays put.
         petHandler.postDelayed(petRunnable, PET_ANIMATION_MS)
     }
@@ -487,9 +508,15 @@ class GhostPlayground @JvmOverloads constructor(
         }
         if (deliveryState == DeliveryState.FALLING || deliveryState == DeliveryState.CHASING) {
             val r = (size * 0.18f).toInt()
-            val drawable = if (deliveryKind == DeliveryKind.TREAT) treatDrawable else giftDrawable
-            drawable.setBounds((itemX - r).toInt(), (itemY - r).toInt(), (itemX + r).toInt(), (itemY + r).toInt())
-            drawable.draw(canvas)
+            val emoji = deliveryEmoji
+            if (emoji != null) {
+                emojiItemPaint.textSize = r * 2.2f
+                canvas.drawText(emoji, itemX, itemY + r * 0.75f, emojiItemPaint)
+            } else {
+                val drawable = if (deliveryKind == DeliveryKind.TREAT) treatDrawable else giftDrawable
+                drawable.setBounds((itemX - r).toInt(), (itemY - r).toInt(), (itemX + r).toInt(), (itemY + r).toInt())
+                drawable.draw(canvas)
+            }
         }
         if (away) {
             drawEmpty(canvas)

@@ -84,7 +84,7 @@ class GhostOverlayService : Service() {
 
         /** Writes that can change how he is feeling, or how he looks. Nothing else needs a redraw. */
         private val MOOD_KEYS = setOf("hunger", "energy", "happiness", "anger", "sleeping", "fed_at")
-        private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name")
+        private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name", "owned_items") + Prefs.OUTFIT_KEYS
 
         /**
          * Whether he can be tapped outside the app. Unlike [MOOD_KEYS]/[LOOK_KEYS] this is not a
@@ -860,10 +860,12 @@ class GhostOverlayService : Service() {
             Emote.HAPPY -> {
                 view.showExpression(Expression.SMILE, 2.2f)
                 view.startWiggle()
+                view.popEmoji()
             }
             Emote.AFFECTION -> {
                 view.showExpression(Expression.DELIGHTED, 2.4f)
                 view.spawnHeart()
+                view.popEmoji()
             }
             Emote.SLEEPY -> view.showExpression(Expression.SLEEPY, 3.0f)
             Emote.CURIOUS -> view.showExpression(Expression.CONFUSED, 2.2f)
@@ -966,6 +968,10 @@ class GhostOverlayService : Service() {
             lastShade = newShade
             ghost?.setShade(newShade)
         }
+
+        // A change of clothes from the Shop, put on him where he floats.
+        val newOutfit = Outfit.load(this)
+        if (view.outfit != newOutfit) view.outfit = newOutfit
 
     }
 

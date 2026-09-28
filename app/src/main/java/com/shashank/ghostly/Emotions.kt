@@ -136,13 +136,15 @@ object Emotions {
 
     const val ANGRY_THRESHOLD = 55f
 
-    /** Free-to-play: everything costs a token except Feed and letting him nap. One token each. */
-    const val TREAT_COST = 1
-    const val GIFT_COST = 1
+    /** Free-to-play: Feed and letting him nap never cost anything. Play is a token a go; the Shop
+     *  prices everything else — see [ShopCatalog]. */
     const val PLAY_COST = 1
 
-    /** How many tokens a new day brings — see [tokens]. */
+    /** What each new day pays into the wallet — see [tokens]. */
     const val DAILY_TOKENS = 5
+
+    /** Paid once, on the first look at the wallet, so there is something to spend on day one. */
+    const val WELCOME_TOKENS = 10
 
     enum class PlayOutcome { SUCCESS, NO_TOKENS, TOO_TIRED }
 
@@ -185,47 +187,54 @@ object Emotions {
         return Snapshot(body, anger, mood, tokens(context), personality)
     }
 
-    /** Catches the daily allowance up to today: a new day resets it to [DAILY_TOKENS] rather than
-     *  adding to it, so tokens don't bank up over a week away — it's a daily allowance, not income. */
+    /**
+     * The wallet, caught up to today. Each new day pays [DAILY_TOKENS] in on top of whatever is
+     * left — tokens keep now, so they can be saved up for something in the Shop. A week away still
+     * only pays one day's worth: it rewards coming back, not being gone.
+     */
     fun tokens(context: Context): Int {
-        val today = epochDay()
-        val grantedDay = Prefs.tokensGrantedDay(context)
-        if (today > grantedDay) {
-            Prefs.saveTokens(context, DAILY_TOKENS)
-            Prefs.saveTokensGrantedDay(context, today)
-            return DAILY_TOKENS
+        var balance = Prefs.tokens(context)
+        if (!Prefs.welcomeTokensGiven(context)) {
+            Prefs.setWelcomeTokensGiven(context)
+            balance += WELCOME_TOKENS
+            Prefs.saveTokens(context, balance)
         }
-        return Prefs.tokens(context)
+        val today = Streak.today()
+        if (today > Prefs.tokensGrantedDay(context)) {
+            balance += DAILY_TOKENS
+            Prefs.saveTokens(context, balance)
+            Prefs.saveTokensGrantedDay(context, today)
+        }
+        return balance
     }
 
-    /** Spends one token if there is one to spend. */
-    private fun spendToken(context: Context): Boolean {
+    fun addTokens(context: Context, amount: Int) {
+        if (amount <= 0) return
+        Prefs.saveTokens(context, tokens(context) + amount)
+    }
+
+    /** Spends [cost] if there is that much to spend. Returns false, changing nothing, if not. */
+    fun spend(context: Context, cost: Int): Boolean {
         val t = tokens(context)
-        if (t < 1) return false
-        Prefs.saveTokens(context, t - 1)
+        if (t < cost) return false
+        Prefs.saveTokens(context, t - cost)
         return true
     }
 
-    /** A bought pick-me-up: better than a free feed, and knocks a chunk off anger. Returns false,
-     *  changing nothing, if there's no token to spend. */
-    fun giveTreat(context: Context): Boolean {
-        if (!spendToken(context)) return false
+    /**
+     * Something from the Shop's Treats shelf. Each one moves his needs by its own amounts — a cake
+     * fills him right up, bubble tea wakes him up, a gift is the apology that settles his temper.
+     * Returns false, changing nothing, if it can't be afforded.
+     */
+    fun giveTreat(context: Context, treat: ShopItem): Boolean {
+        val effect = treat.effect ?: return false
+        if (!spend(context, treat.price)) return false
         val s = snapshot(context)
-        val hunger = (s.body.hunger + 20f).coerceAtMost(MAX)
-        val happiness = (s.body.happiness + 15f).coerceAtMost(MAX)
-        Prefs.saveStats(context, hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis())
-        Prefs.saveAnger(context, (s.anger - 10f * s.personality.forgiveness).coerceIn(MIN, MAX))
-        return true
-    }
-
-    /** The real apology: a big happiness boost and the anger-reducer that actually wins him back.
-     *  Returns false, changing nothing, if there's no token to spend. */
-    fun giveGift(context: Context): Boolean {
-        if (!spendToken(context)) return false
-        val s = snapshot(context)
-        val happiness = (s.body.happiness + 30f).coerceAtMost(MAX)
-        Prefs.saveStats(context, s.body.hunger, s.body.energy, happiness, s.body.sleeping, System.currentTimeMillis())
-        Prefs.saveAnger(context, (s.anger - 40f * s.personality.forgiveness).coerceIn(MIN, MAX))
+        val hunger = (s.body.hunger + effect.hunger).coerceIn(MIN, MAX)
+        val energy = (s.body.energy + effect.energy).coerceIn(MIN, MAX)
+        val happiness = (s.body.happiness + effect.happiness).coerceIn(MIN, MAX)
+        Prefs.saveStats(context, hunger, energy, happiness, s.body.sleeping, System.currentTimeMillis())
+        Prefs.saveAnger(context, (s.anger - effect.calm * s.personality.forgiveness).coerceIn(MIN, MAX))
         return true
     }
 
@@ -234,7 +243,7 @@ object Emotions {
     fun playWithToken(context: Context): PlayOutcome {
         if (tokens(context) < 1) return PlayOutcome.NO_TOKENS
         if (!PetStats.play(context)) return PlayOutcome.TOO_TIRED
-        spendToken(context)
+        spend(context, PLAY_COST)
         return PlayOutcome.SUCCESS
     }
 }

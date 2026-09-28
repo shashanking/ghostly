@@ -48,17 +48,20 @@ MAKE HIM YOURS
 • Three sizes and four shades, from near-solid Bone to see-through Vapour to inverted Ink
 • Give him a name, and he goes by it in his notification and on his home-screen widget
 • A share card, so you can show him to someone
+• Dress him up — hats, glasses, scarves and more from the Shop, drawn right onto him wherever he floats
+• Emojis that pop up over his head when he is happy
 
 LOOKING AFTER HIM
 
 • Feed him, play with him, let him nap when he is worn out
-• A small daily allowance of tokens for playing and treats
-• A streak for coming back, and he says so when you have been away
+• A daily streak: look after him once a day to keep it going, with a weekly freeze for the day you forget
+• Tokens every day, plus extra at streak milestones, to spend on treats, clothes and emojis — earned, never bought
+• He tells you when your streak is about to run out, when he is hungry or cross, and when he misses you
 
 PERMISSIONS, AND WHY
 
 • Display over other apps — this is the whole app. Without it he cannot leave the app's own screen.
-• Notifications — Android requires an ongoing notification while he is floating. It carries his name, how he is doing, and a Stop button.
+• Notifications — Android requires an ongoing notification while he is floating. It carries his name, how he is doing, and a Stop button. He also uses them for streak reminders and to say how he is feeling — never between 11pm and 8am, and each kind can be switched off in Settings.
 • Run at startup — so he comes back after a reboot, if he was floating before.
 • Vibrate — the optional little buzz when he bolts.
 

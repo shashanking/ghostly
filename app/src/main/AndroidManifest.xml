@@ -52,6 +52,11 @@
             android:name=".WatchdogReceiver"
             android:exported="false" />
 
+        <!-- The half-hourly look at how he is: streak reminders, moods, missing you. -->
+        <receiver
+            android:name=".NudgeReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".GhostlyWidgetProvider"
             android:exported="true">

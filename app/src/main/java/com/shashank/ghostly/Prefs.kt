@@ -55,6 +55,22 @@ object Prefs {
     private const val KEY_PENDING_EVENTS = "pending_events"
     private const val KEY_DAILY = "daily"
     private const val KEY_UNLOCKS_DAY = "unlocks_day"
+    private const val KEY_STREAK_LONGEST = "streak_longest"
+    private const val KEY_STREAK_FREEZES = "streak_freezes"
+    private const val KEY_STREAK_FREEZE_WEEK = "streak_freeze_week"
+    private const val KEY_WELCOME_TOKENS = "welcome_tokens_given"
+    private const val KEY_OWNED = "owned_items"
+    private const val KEY_NOTIFY_STREAK = "notify_streak"
+    private const val KEY_NOTIFY_MOOD = "notify_mood"
+    private const val KEY_NOTIFY_MISSING = "notify_missing"
+    private const val KEY_LAST_CARE_AT = "last_care_at"
+
+    /** What he has on, one key per slot — see [Outfit]. Public so the overlay can listen for them. */
+    const val KEY_WEAR_HEAD = "wear_head"
+    const val KEY_WEAR_FACE = "wear_face"
+    const val KEY_WEAR_NECK = "wear_neck"
+    const val KEY_WEAR_EMOJI = "wear_emoji"
+    val OUTFIT_KEYS = setOf(KEY_WEAR_HEAD, KEY_WEAR_FACE, KEY_WEAR_NECK, KEY_WEAR_EMOJI)
 
     /** Starting point for a freshly installed pet — content, but with room to grow or fade. */
     private const val DEFAULT_STAT = 80f
@@ -166,20 +182,77 @@ object Prefs {
     fun saveTokens(context: Context, tokens: Int) =
         prefs(context).edit().putInt(KEY_TOKENS, tokens.coerceAtLeast(0)).apply()
 
-    /** Epoch day (UTC) the daily token allowance was last granted. 0 means "never". */
+    /** Epoch day the daily tokens were last paid in. 0 means "never". Written as a UTC day by older
+     *  builds and a local one since; the two never differ by more than a day, once. */
     fun tokensGrantedDay(context: Context) = prefs(context).getLong(KEY_TOKENS_GRANTED_DAY, 0L)
 
     fun saveTokensGrantedDay(context: Context, day: Long) =
         prefs(context).edit().putLong(KEY_TOKENS_GRANTED_DAY, day).apply()
 
-    fun streak(context: Context) = prefs(context).getInt(KEY_STREAK, 0)
-
-    /** Epoch day (UTC) the streak was last extended. 0 means "never". */
-    fun streakDay(context: Context) = prefs(context).getLong(KEY_STREAK_DAY, 0L)
-
-    fun saveStreak(context: Context, streak: Int, day: Long) {
-        prefs(context).edit().putInt(KEY_STREAK, streak).putLong(KEY_STREAK_DAY, day).apply()
+    /**
+     * The streak's whole memory. The count and its day keep the keys the old open-the-app streak
+     * used, so a streak that was going carries straight on into this one.
+     */
+    fun streakState(context: Context): StreakState {
+        val p = prefs(context)
+        val current = p.getInt(KEY_STREAK, 0)
+        return StreakState(
+            current = current,
+            longest = maxOf(p.getInt(KEY_STREAK_LONGEST, 0), current),
+            lastDay = p.getLong(KEY_STREAK_DAY, 0L),
+            freezes = p.getInt(KEY_STREAK_FREEZES, StreakRules.FREEZES_PER_WEEK),
+            freezeWeek = p.getLong(KEY_STREAK_FREEZE_WEEK, 0L),
+        )
     }
+
+    fun saveStreakState(context: Context, s: StreakState) {
+        prefs(context).edit()
+            .putInt(KEY_STREAK, s.current)
+            .putInt(KEY_STREAK_LONGEST, s.longest)
+            .putLong(KEY_STREAK_DAY, s.lastDay)
+            .putInt(KEY_STREAK_FREEZES, s.freezes)
+            .putLong(KEY_STREAK_FREEZE_WEEK, s.freezeWeek)
+            .apply()
+    }
+
+    /** The one-off starter tokens, so the Shop is not a wall of things you can't have yet. */
+    fun welcomeTokensGiven(context: Context) = prefs(context).getBoolean(KEY_WELCOME_TOKENS, false)
+
+    fun setWelcomeTokensGiven(context: Context) =
+        prefs(context).edit().putBoolean(KEY_WELCOME_TOKENS, true).apply()
+
+    /** Ids of everything bought for keeps — see [ShopCatalog]. */
+    fun ownedItems(context: Context): Set<String> =
+        prefs(context).getStringSet(KEY_OWNED, emptySet())?.toSet() ?: emptySet()
+
+    fun addOwnedItem(context: Context, id: String) =
+        prefs(context).edit().putStringSet(KEY_OWNED, ownedItems(context) + id).apply()
+
+    fun worn(context: Context, key: String): String? = prefs(context).getString(key, null)
+
+    fun setWorn(context: Context, key: String, id: String?) =
+        prefs(context).edit().putString(key, id).apply()
+
+    // Notifications, one switch per kind. All on unless turned off.
+    fun notifyStreak(context: Context) = prefs(context).getBoolean(KEY_NOTIFY_STREAK, true)
+    fun setNotifyStreak(context: Context, v: Boolean) = prefs(context).edit().putBoolean(KEY_NOTIFY_STREAK, v).apply()
+    fun notifyMood(context: Context) = prefs(context).getBoolean(KEY_NOTIFY_MOOD, true)
+    fun setNotifyMood(context: Context, v: Boolean) = prefs(context).edit().putBoolean(KEY_NOTIFY_MOOD, v).apply()
+    fun notifyMissing(context: Context) = prefs(context).getBoolean(KEY_NOTIFY_MISSING, true)
+    fun setNotifyMissing(context: Context, v: Boolean) = prefs(context).edit().putBoolean(KEY_NOTIFY_MISSING, v).apply()
+
+    /** The last time he was actually looked after in the app — what "he misses you" counts from.
+     *  0 means never, in which case the last app open stands in for it. */
+    fun lastCareAt(context: Context) = prefs(context).getLong(KEY_LAST_CARE_AT, 0L)
+
+    fun saveLastCareAt(context: Context, at: Long) =
+        prefs(context).edit().putLong(KEY_LAST_CARE_AT, at).apply()
+
+    /** The notification engine's own bookkeeping, kept as one JSON blob — see [Nudges]. */
+    fun nudgeLog(context: Context): String = prefs(context).getString("nudge_log", "{}") ?: "{}"
+
+    fun saveNudgeLog(context: Context, json: String) =
+        prefs(context).edit().putString("nudge_log", json).apply()
 
     /** 0 means "never opened before" — used to tell a first run from a real welcome-back. */
     fun lastOpenedAt(context: Context) = prefs(context).getLong(KEY_LAST_OPENED_AT, 0L)

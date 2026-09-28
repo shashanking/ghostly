@@ -5,7 +5,8 @@ import android.content.Context
 import android.content.Intent
 
 /**
- * Brings the ghost back after a reboot or an app update, if he was floating before.
+ * Brings the ghost back after a reboot or an app update, if he was floating before, and puts his
+ * notification alarm back either way.
  *
  * A reboot is one of the exemptions for starting a foreground service; an app update is not, so
  * that start can be refused — [Recall] handles the refusal instead of letting it crash the process.
@@ -14,6 +15,9 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        // His notifications run on an alarm, and a reboot clears every alarm — whether or not he
+        // was floating.
+        Nudges.reschedule(context)
         if (!Recall.wanted(context)) return
 
         Recall.bringBack(

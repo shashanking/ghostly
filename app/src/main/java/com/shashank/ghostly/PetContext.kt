@@ -102,7 +102,7 @@ data class PetContext(
                 happiness = stats.happiness,
                 anger = Prefs.anger(context),
                 sleeping = stats.sleeping,
-                streakDays = Prefs.streak(context),
+                streakDays = Streak.current(context),
                 unlocksToday = Prefs.unlocksToday(context),
                 minutesSinceInteraction = sinceMinutes,
                 lastEvent = lastEvent

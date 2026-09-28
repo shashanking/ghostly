@@ -56,6 +56,10 @@ class GhostView(context: Context) : View(context) {
          */
         const val BUBBLE_MAX_W_DP = 62f
 
+        /** How long an emoji takes to float off, and the least time between two of them. */
+        private const val EMOJI_LIFE_SECONDS = 1.6f
+        private const val EMOJI_GAP_SECONDS = 2.5f
+
         /** What a bubble needs vertically: its own height, its tail, and the gap above his crown. */
         private val bubbleStackDp = BUBBLE_TEXT_DP + BUBBLE_PAD_Y_DP * 2f + BUBBLE_TAIL_DP + BUBBLE_LIFT_DP
 
@@ -188,6 +192,12 @@ class GhostView(context: Context) : View(context) {
     // simply very happy.
     private class Heart(val dx: Float, val born: Float)
     private val hearts = mutableListOf<Heart>()
+
+    /** The emoji he has on, floating up off his head when he is pleased — see [popEmoji]. */
+    private class EmojiPop(val text: String, val dx: Float, val born: Float)
+    private val emojiPops = mutableListOf<EmojiPop>()
+    private val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private var lastEmojiAt = -10f
     private val heartPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF6B7A") }
 
     // Startled: a couple of sweat drops and a few short speed-lines trailing behind.
@@ -214,6 +224,19 @@ class GhostView(context: Context) : View(context) {
 
     /** Which silhouette to draw. Body, motion and behaviour are otherwise identical. */
     var species: Species = Species.GHOST
+
+    /**
+     * What he is wearing. Read from what is stored when the view is made, so every ghost — the
+     * box, the overlay, the widget, the share card — turns up dressed; anything that shows him in
+     * something else (a Shop preview) sets it.
+     */
+    var outfit: Outfit = Outfit.load(context)
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val outfitPainter = OutfitPainter()
 
     private var phase = 0f
 
@@ -471,6 +494,7 @@ class GhostView(context: Context) : View(context) {
 
     /** A hand settles in and strokes his head for a couple of seconds. */
     fun startPetting() {
+        popEmoji()
         petting = true
         pettingEndsAt = phase + 2f
         spawnHeart()
@@ -482,6 +506,18 @@ class GhostView(context: Context) : View(context) {
     fun spawnHeart() {
         if (hearts.size >= 4) return
         hearts += Heart(dx = (Math.random().toFloat() - 0.5f) * 0.5f, born = phase)
+    }
+
+    /**
+     * Floats [text] — by default the emoji he is wearing — up off his head. Rationed to one every
+     * so often, so a stream of pets or a long meal doesn't turn into a fountain of them.
+     */
+    fun popEmoji(text: String? = outfit.emojiChar, force: Boolean = false) {
+        if (text == null) return
+        if (!force && phase - lastEmojiAt < EMOJI_GAP_SECONDS) return
+        if (emojiPops.size >= 3) return
+        lastEmojiAt = phase
+        emojiPops += EmojiPop(text, dx = (Math.random().toFloat() - 0.5f) * 0.35f, born = phase)
     }
 
     /** A little speech bubble above his head for a beat — "Meow", "Woof", a happy "~", and so on. */
@@ -569,6 +605,7 @@ class GhostView(context: Context) : View(context) {
     /** Chomps happily in place for [durationSeconds], dipping toward the food and sending up
      *  little hearts as he eats — the owner is expected to hold him still for this long. */
     fun startEating(durationSeconds: Float = 1.6f) {
+        popEmoji()
         eating = true
         eatingEndsAt = phase + durationSeconds
         nextEatingHeartAt = phase
@@ -589,6 +626,7 @@ class GhostView(context: Context) : View(context) {
     /** Big rounded eyes and a burst of hearts for [durationSeconds] — played when he's just been
      *  given a gift. */
     fun startGiftJoy(durationSeconds: Float = 2f) {
+        popEmoji()
         giftJoy = true
         giftJoyEndsAt = phase + durationSeconds
         nextGiftHeartAt = phase
@@ -677,6 +715,7 @@ class GhostView(context: Context) : View(context) {
             }
         }
         hearts.removeAll { phase - it.born > 1.3f }
+        emojiPops.removeAll { phase - it.born > EMOJI_LIFE_SECONDS }
         // Eases toward the target rather than snapping, so a puff grows/settles instead of popping.
         puffAmount += (puffTarget - puffAmount) * (1f - kotlin.math.exp(-4f * dt))
     }
@@ -805,6 +844,13 @@ class GhostView(context: Context) : View(context) {
         // buried part of it. The bat's wings are the exception and go on afterwards; the reason is
         // in [drawBatWingsOver].
         if (species == Species.BAT) drawBatWingsOver(canvas, cx, top, r, gw)
+
+        // A hat goes on before his face, so eyes that sit high — the frog's — show over its brim.
+        // In a square view (the widget, the share card, onboarding) there is no headroom above him,
+        // so a tall hat is sat a little lower on his head rather than sliced off at the top.
+        val hatRoom = top - bob - density * 2f
+        val hatSink = (OutfitPainter.hatHeight(outfit.head) * gw - hatRoom).coerceIn(0f, gw * 0.22f)
+        outfitPainter.drawHead(canvas, outfit.head, cx, top + hatSink, r, gw, phase, species == Species.FROG)
 
         // Face. Deliberately oversized — at this size a subtle face just disappears.
         // Each eye is a pale sclera with a dark pupil that actually travels inside it, so you can
@@ -948,6 +994,9 @@ class GhostView(context: Context) : View(context) {
 
         if (detailed && species == Species.CAT && !asleep) drawWhiskers(canvas, cx, mouthY, gw)
 
+        outfitPainter.drawNeck(canvas, outfit.neck, cx, mouthY, gw, phase)
+        outfitPainter.drawFace(canvas, outfit.face, cx, eyeY, eyeDx, eyeR, mouthY, gw, shade == Shade.INK)
+
         if (asleep && detailed) {
             val t = (phase % 2.4f) / 2.4f
             zzzPaint.alpha = ((1f - t) * 210f).toInt().coerceIn(0, 210)
@@ -959,6 +1008,7 @@ class GhostView(context: Context) : View(context) {
         if (!asleep && startle > 0.35f) drawSpookEffects(canvas, cx, top, r, gw)
         if (petting) drawPettingHand(canvas, cx, top, r, gw)
         if (hearts.isNotEmpty()) drawHearts(canvas, w, cx, top, gw)
+        if (emojiPops.isNotEmpty()) drawEmojiPops(canvas, w, cx, top, gw)
 
         canvas.restore()
 
@@ -966,7 +1016,23 @@ class GhostView(context: Context) : View(context) {
         // rollover and swung out past the edge of the view, where it was clipped. His words stay
         // upright and where they were put; only he turns over underneath them. It still rides the
         // idle bob, so it stays attached to his head rather than hanging in the air.
-        if (bubbleText != null) drawBubble(canvas, vw / 2f, top + bob)
+        // A tall hat lifts the bubble off it, as far as the headroom allows.
+        if (bubbleText != null) drawBubble(canvas, vw / 2f, top + bob - OutfitPainter.hatHeight(outfit.head) * gw)
+    }
+
+    private fun drawEmojiPops(canvas: Canvas, viewW: Float, cx: Float, top: Float, gw: Float) {
+        val size = maxOf(gw * 0.46f, 15f * density)
+        for (pop in emojiPops) {
+            val t = ((phase - pop.born) / EMOJI_LIFE_SECONDS).coerceIn(0f, 1f)
+            // Pops in quickly, drifts up, and fades over the back half.
+            val grow = (t / 0.18f).coerceAtMost(1f)
+            emojiPaint.textSize = size * (0.6f + 0.4f * grow)
+            emojiPaint.alpha = ((if (t < 0.5f) 1f else (1f - t) * 2f) * 255f).toInt().coerceIn(0, 255)
+            val x = (cx + pop.dx * gw + sin((phase - pop.born) * 4f) * gw * 0.05f)
+                .coerceIn(size * 0.6f, viewW - size * 0.6f)
+            val y = (top - gw * 0.02f - t * gw * 0.5f).coerceAtLeast(size)
+            canvas.drawText(pop.text, x, y, emojiPaint)
+        }
     }
 
     /** One brow arched high, the other flat and low — the whole reading of confusion sits here. */

@@ -114,11 +114,19 @@ class IconDrawable(val glyph: IconGlyph, tint: Int = Color.WHITE) : Drawable() {
         canvas.drawLine(w * 0.52f, h * 0.28f, w * 0.60f, h * 0.12f, strokePaint)
     }
 
+    /**
+     * A flame, not a drop: a round belly, a tip leaning off to one side, and a smaller lick of
+     * fire beside it. The old symmetrical lens read as a water drop — or as a second currency.
+     */
     private fun drawFlame(canvas: Canvas, w: Float, h: Float) {
         path.reset()
-        path.moveTo(w * 0.5f, h * 0.08f)
-        path.cubicTo(w * 0.82f, h * 0.38f, w * 0.72f, h * 0.62f, w * 0.5f, h * 0.92f)
-        path.cubicTo(w * 0.28f, h * 0.62f, w * 0.18f, h * 0.38f, w * 0.5f, h * 0.08f)
+        path.moveTo(w * 0.5f, h * 0.95f)
+        path.cubicTo(w * 0.22f, h * 0.95f, w * 0.12f, h * 0.74f, w * 0.18f, h * 0.55f)
+        path.cubicTo(w * 0.22f, h * 0.43f, w * 0.3f, h * 0.36f, w * 0.34f, h * 0.24f)
+        path.cubicTo(w * 0.4f, h * 0.32f, w * 0.42f, h * 0.38f, w * 0.43f, h * 0.44f)
+        path.cubicTo(w * 0.5f, h * 0.3f, w * 0.5f, h * 0.16f, w * 0.56f, h * 0.04f)
+        path.cubicTo(w * 0.66f, h * 0.2f, w * 0.8f, h * 0.34f, w * 0.83f, h * 0.55f)
+        path.cubicTo(w * 0.88f, h * 0.78f, w * 0.74f, h * 0.95f, w * 0.5f, h * 0.95f)
         path.close()
         canvas.drawPath(path, fillPaint)
     }
