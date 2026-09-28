@@ -20,7 +20,7 @@ browser, so it is written as steps you can follow straight down the page.
 | `ghostly-release.jks` + `keystore.properties` | Your upload key — **back these up** |
 
 App identity, fixed at first upload and never changeable: **`com.shashank.ghostly`**. This build is
-version 1.4.0 (versionCode 7), min Android 8.0, targets API 36 (required for new apps since
+version 1.5.0 (versionCode 8), min Android 8.0, targets API 36 (required for new apps since
 31 Aug 2026).
 
 ### What changed since the 1.0.1 material was written
@@ -100,14 +100,43 @@ justifications by hand and can come back asking why a defined type does not fit.
 covers exactly that, and the video shows the overlay being summoned, floating over other apps, and
 being stopped from its notification.
 
+## 5b. In-app products (only needed once)
+
+The **Monetize** section stays locked until Play has seen a build carrying
+`com.android.vending.BILLING` — which is versionCode 8 onwards. So this happens *after* the first
+upload of that build, in any track, not before.
+
+1. **Setup → Payments profile** → create the Google Payments merchant account. India is supported.
+   Expect identity and bank verification; it can take a few days, and nothing below works until it
+   is approved.
+2. **Monetize → Products → In-app products → Create product**, three times. The product IDs must
+   match `TokenPacks.ALL` in `app/src/main/java/com/shashank/ghostly/Billing.kt` **exactly**, and
+   can never be changed once published:
+
+   | Product ID | Name | What it grants |
+   | --- | --- | --- |
+   | `tokens_handful` | A handful | 60 tokens |
+   | `tokens_pocketful` | A pocketful | 200 tokens |
+   | `tokens_hoard` | A hoard | 600 tokens |
+
+   Set a price for your home country and let Play convert the rest. Set each one **Active** — an
+   inactive product is simply missing from `queryProductDetailsAsync`, and the Tokens shelf then
+   hides itself with no error anywhere.
+3. **Testing → License testing** → add your own Google account, so you can run the whole purchase
+   flow without being charged.
+4. Test on a build installed **from Play** (internal testing track is enough). Billing does not work
+   on a sideloaded APK — `queryProductDetailsAsync` returns nothing, so the shelf will not appear.
+
+Play takes 15% of the first $1M of yearly revenue, 30% above that.
+
 ## 6. Release worldwide
 
 **Production → Create new release**
 
 - Upload `app/build/outputs/bundle/release/app-release.aab`
 - Keep **Play App Signing** enabled (the default)
-- Release name: `1.4.0 (7)` · Release notes: paste the **1.4.0** block from the **Release notes**
-  section of `play/store-listing.md` (498 characters — Play's limit is 500)
+- Release name: `1.5.0 (8)` · Release notes: paste the **1.5.0** block from the **Release notes**
+  section of `play/store-listing.md` (Play's limit is 500)
 - **Countries/regions → select all** for a worldwide launch
 - Save → Review release → **Start rollout to Production** (100%)
 
@@ -122,7 +151,7 @@ First reviews typically take a few days, and longer for a brand-new developer ac
 
 ## Versioning
 
-This build is versionCode `7`, versionName `1.4.0`. Play rejects an upload whose versionCode it has
+This build is versionCode `8`, versionName `1.5.0`. Play rejects an upload whose versionCode it has
 seen before, so raise `versionCode` in `app/build.gradle.kts` for every upload — even a re-upload
 of a rejected build.
 

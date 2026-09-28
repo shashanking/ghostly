@@ -22,7 +22,10 @@
     <string name="shop_treats_note">Treats are used up when you give them. A Gift is the one that really wins him back when he\'s cross.</string>
     <string name="shop_wardrobe_note">Clothes are his to keep. He can wear one hat, one face thing and one neck thing at a time — tap Wearing to take something off.</string>
     <string name="shop_emojis_note">He wears one emoji at a time. It floats up over his head when he\'s happy — petted, fed, playing, or just pleased with himself.</string>
-    <string name="shop_footer">Tokens are earned, never bought: +%1$d every day, plus extra for streak milestones.</string>
+    <string name="shop_footer">Tokens come free every day (+%1$d), plus extra for streak milestones. A top-up is only ever a shortcut.</string>
+    <string name="shop_tokens">Tokens</string>
+    <string name="shop_tokens_note">Everything in the Shop can be earned for free — a top-up only saves you the wait. Tokens arrive straight away and never expire.</string>
+    <string name="shop_tokens_amount">+%1$d tokens</string>
     <string name="shop_give">Give · %1$d</string>
     <string name="shop_buy">Buy · %1$d</string>
     <string name="shop_wear">Wear</string>

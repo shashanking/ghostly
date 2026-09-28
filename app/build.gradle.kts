@@ -20,8 +20,8 @@ android {
         applicationId = "com.shashank.ghostly"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.4.0"
+        versionCode = 8
+        versionName = "1.5.0"
     }
 
     signingConfigs {
@@ -84,6 +84,9 @@ dependencies {
     // Play in-app updates: the only way to know a newer build is live on Play and to install it
     // without sending the user out to the store listing.
     implementation("com.google.android.play:app-update:2.1.0")
+    // Play Billing: the only permitted way to sell anything inside the app. Token packs only —
+    // everything it buys is cosmetic and already earnable for free.
+    implementation("com.android.billingclient:billing:8.3.0")
 }
 
 // Gradle Play Publisher — `./gradlew publishBundle` uploads the signed release AAB straight to

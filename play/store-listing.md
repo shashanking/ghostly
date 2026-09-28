@@ -55,7 +55,8 @@ LOOKING AFTER HIM
 
 • Feed him, play with him, let him nap when he is worn out
 • A daily streak: look after him once a day to keep it going, with a weekly freeze for the day you forget
-• Tokens every day, plus extra at streak milestones, to spend on treats, clothes and emojis — earned, never bought
+• Tokens every day, plus extra at streak milestones, to spend on treats, clothes and emojis
+• Everything in the Shop can be earned for free. Tokens can also be bought, which only saves you the wait — nothing is locked behind money, and nothing expires
 • He tells you when your streak is about to run out, when he is hungry or cross, and when he misses you
 
 PERMISSIONS, AND WHY
@@ -69,7 +70,8 @@ SIGNING IN IS OPTIONAL
 
 Ghostly works completely without an account. Sign in with Google only if you want to keep your ghost when you change phone — then his name, look, stats and token balance are saved to our own server, and to nothing and nobody else. You can delete that copy from inside the app at any time; the ghost on your phone stays either way.
 
-No ads. No in-app purchases. No analytics, no trackers, no third-party advertising SDKs.
+No ads. No analytics, no trackers, no third-party advertising SDKs. The only thing sold is a
+top-up of the tokens you already earn for free.
 ```
 
 ## Graphics checklist
@@ -88,7 +90,18 @@ short side. Raw 1080×2400 phone captures are 2.22:1 and get rejected — the on
 
 ## Release notes (What's new, max 500)
 
-### 1.4.0 (versionCode 7) — current
+### 1.5.0 (versionCode 8) — current
+
+```
+Tokens can now be topped up, if you would rather not wait for them. Three sizes,
+and that is the only thing in Ghostly that costs money — every token they give
+is still earned free every day, and nothing is locked behind them.
+
+Everything else stays as it was: the daily streak, the Shop's treats, clothes
+and emojis, and his ring of buttons wherever he floats.
+```
+
+### 1.4.0 (versionCode 7)
 
 ```
 A daily streak: look after him once a day to keep it, with a weekly freeze for
@@ -186,6 +199,11 @@ Sign-in is optional, so declare the data as **optional** (collected only if the 
 - **Device or other IDs** — collected, optional, for *App functionality* (restore on a second device).
 - Encrypted in transit: **Yes** (HTTPS only). Deletion: **Yes** — in-app (Settings → Delete my
   account) and via `https://shashanking.github.io/ghostly-privacy/delete-account.html`.
+- **Purchase history: not collected.** Play Billing handles the payment; the purchase token is
+  written to `Prefs.creditedPurchases` on the phone and never leaves it. Only the resulting token
+  balance is uploaded, and only when signed in, which is already declared above under App activity.
+  Add a Financial info → Purchase history declaration the moment purchase tokens are POSTed to the
+  server for verification.
 - No analytics, no crash reporting, no ads SDK. Location, contacts, files, screen contents: **not collected**.
 - Account deletion URL for the Console field: `https://shashanking.github.io/ghostly-privacy/delete-account.html`
 
@@ -194,12 +212,16 @@ Sign-in is optional, so declare the data as **optional** (collected only if the 
 - Category: **Utility, Productivity, Communication, or Other**
 - Violence, sexuality, language, controlled substances, gambling, user interaction,
   data sharing, personal info: **No** to all
+- Digital purchases: **Yes** — the questionnaire has to be re-taken for this; the rating itself
+  does not change, but an un-updated answer is a policy violation on its own
 - Expected result: **Everyone / PEGI 3 / rated for all ages**
 
 ### Ads / IAP / target audience
 
 - Contains ads: **No**
-- In-app purchases: **No**
+- In-app purchases: **Yes** — consumable token packs only (`tokens_handful`, `tokens_pocketful`,
+  `tokens_hoard`). No subscriptions. Nothing in the app is locked behind them: every token they
+  grant is also earnable for free, daily and at streak milestones.
 - Target audience: **13+** (avoids the extra Families policy requirements; the app has no
   child-directed content or design)
 - Government app / financial features / health: **No**

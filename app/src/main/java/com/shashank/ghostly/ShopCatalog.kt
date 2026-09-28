@@ -12,12 +12,17 @@ import android.content.Context
  * - **Emojis** are bought once and kept too. The one he has on pops up over his head when he is
  *   happy — petted, fed, playing, or just pleased with himself out on the overlay.
  *
- * Prices are in tokens only. Nothing here is sold for money.
+ * Everything on these three shelves is priced in tokens, and every token is earnable for
+ * free. Money buys tokens and nothing else — see [TokenPack].
  */
 enum class ShopShelf(val label: String) {
     TREATS("Treats"),
     WARDROBE("Wardrobe"),
     EMOJIS("Emojis"),
+
+    /** The only shelf priced in money: [TokenPack]s, bought through Play. Nothing in [ShopCatalog]
+     *  lives here — it sells the currency, not a thing to own. */
+    TOKENS("Tokens"),
 }
 
 /** Where on him a wardrobe item goes, and the Prefs key that remembers what is there. */

@@ -61,6 +61,7 @@ object Prefs {
     private const val KEY_STREAK_FREEZE_WEEK = "streak_freeze_week"
     private const val KEY_WELCOME_TOKENS = "welcome_tokens_given"
     private const val KEY_OWNED = "owned_items"
+    private const val KEY_CREDITED = "credited_purchases"
     private const val KEY_NOTIFY_STREAK = "notify_streak"
     private const val KEY_NOTIFY_MOOD = "notify_mood"
     private const val KEY_NOTIFY_MISSING = "notify_missing"
@@ -303,6 +304,22 @@ object Prefs {
 
     fun addOwnedItem(context: Context, id: String) =
         prefs(context).edit().putStringSet(KEY_OWNED, ownedItems(context) + id).apply()
+
+    /**
+     * Purchase tokens whose tokens have already been paid into the wallet.
+     *
+     * Consuming a purchase is what stops Play handing it back, but crediting and consuming are two
+     * round trips: a crash between them would otherwise pay for the same purchase twice on the next
+     * start. Written before the credit, so the worst case is a purchase that is never credited and
+     * shows up in support, rather than one that pays out forever.
+     */
+    fun creditedPurchases(context: Context): Set<String> =
+        prefs(context).getStringSet(KEY_CREDITED, emptySet())?.toSet() ?: emptySet()
+
+    fun addCreditedPurchase(context: Context, purchaseToken: String) =
+        prefs(context).edit()
+            .putStringSet(KEY_CREDITED, creditedPurchases(context) + purchaseToken)
+            .commit()
 
     fun worn(context: Context, key: String): String? = prefs(context).getString(key, null)
 

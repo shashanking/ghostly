@@ -128,6 +128,10 @@ class MainActivity : Activity() {
     private val shopCards = mutableListOf<ShopCard>()
     private val shelfTabs = mutableListOf<Pair<ShopShelf, Button>>()
     private val shelfPages = mutableMapOf<ShopShelf, View>()
+
+    /** Null on a device with no Play Store: the Shop then shows what tokens buy and nothing else. */
+    private var billing: Billing? = null
+    private val packButtons = mutableListOf<Pair<TokenPack, Button>>()
     private var shelfShown = ShopShelf.TREATS
 
     // Style
@@ -159,6 +163,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Built before the UI so the Shop can ask it whether there is a money shelf to draw.
+        if (Billing.available(this)) {
+            billing = Billing(this) {
+                refreshTokenShelf()
+                refreshState()
+            }
+        }
         val root = buildUi()
         setContentView(root)
         applyEdgeToEdgeInsets()
@@ -186,6 +197,8 @@ class MainActivity : Activity() {
         // Before anything is drawn: if he is meant to be out and is not, put him back out rather
         // than letting this screen decide he has come home.
         reviveIfHeShouldBeOut()
+        // Picks up anything bought while the app was closed, as well as connecting.
+        billing?.start()
         // You're looking at him, so nothing he has to say needs saying in the shade.
         Nudges.appVisible = true
         Nudges.clearMood(this)
@@ -207,6 +220,11 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+    }
+
+    override fun onDestroy() {
+        billing?.stop()
+        super.onDestroy()
     }
 
     override fun onPause() {
@@ -792,14 +810,97 @@ class MainActivity : Activity() {
             addView(footnote(getString(R.string.shop_wardrobe_note)))
         }
         shelfPages[ShopShelf.EMOJIS] = buildShelf(null, ShopCatalog.EMOJIS, getString(R.string.shop_emojis_note))
+        shelfPages[ShopShelf.TOKENS] = buildTokenShelf()
         shelfPages.values.forEach { shelves.addView(it) }
         column.addView(shelves)
 
         column.addView(footnote(getString(R.string.shop_footer, Emotions.DAILY_TOKENS)))
 
         showShelf(ShopShelf.TREATS)
+        refreshTokenShelf()
         scroll.addView(column)
         return scroll
+    }
+
+    /**
+     * The one shelf priced in money. Rows rather than the two-up grid the other shelves use: there
+     * are only three, and a price needs the width.
+     *
+     * Every button says what Play says, in the buyer's own currency — never a number from this
+     * build, which would be wrong in most of the world and stale everywhere else.
+     */
+    private fun buildTokenShelf(): LinearLayout {
+        val shelf = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        TokenPacks.ALL.forEach { pack ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(card, dp(20).toFloat(), cardStroke)
+                elevation = dp(2).toFloat()
+                setPadding(dp(16), dp(14), dp(14), dp(14))
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) }
+            }
+            row.addView(iconView(IconGlyph.TOKEN, mint, 30))
+            val text = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
+            }
+            text.addView(TextView(this).apply {
+                this.text = getString(R.string.shop_tokens_amount, pack.tokens)
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                typeface = uiMedium
+            })
+            text.addView(TextView(this).apply {
+                this.text = pack.blurb
+                setTextColor(dim)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(2) }
+            })
+            row.addView(text)
+            val button = Button(this).apply {
+                isAllCaps = false
+                stateListAnimator = null
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                typeface = uiMedium
+                minWidth = dp(92)
+                layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, dp(40))
+                setOnClickListener { billing?.buy(pack) }
+            }
+            addPressBounce(button)
+            packButtons += pack to button
+            row.addView(button)
+            shelf.addView(row)
+        }
+        shelf.addView(footnote(getString(R.string.shop_tokens_note)))
+        return shelf
+    }
+
+    /**
+     * Prices in, or the whole shelf away.
+     *
+     * A buy button that cannot say what it costs is worse than no buy button, so until Play has
+     * answered — or on a device with no Play Store at all — the tab and the shelf are simply not
+     * there, and the Shop reads as the free thing it has always been.
+     */
+    private fun refreshTokenShelf() {
+        val b = billing
+        val show = b != null && b.ready
+        shelfTabs.firstOrNull { it.first == ShopShelf.TOKENS }?.second?.visibility =
+            if (show) View.VISIBLE else View.GONE
+        if (!show) {
+            if (shelfShown == ShopShelf.TOKENS) showShelf(ShopShelf.TREATS)
+            return
+        }
+        packButtons.forEach { (pack, button) ->
+            val price = b.priceOf(pack)
+            button.isEnabled = price != null
+            button.text = price ?: "\u2014"
+            button.background = rounded(Palette.bone, dp(14).toFloat())
+            button.setTextColor(Palette.ink)
+            button.alpha = if (price != null) 1f else 0.45f
+            button.contentDescription = getString(R.string.shop_tokens_amount, pack.tokens) + ", " + button.text
+        }
     }
 
     private fun footnote(text: String) = TextView(this).apply {
@@ -2005,6 +2106,7 @@ class MainActivity : Activity() {
         val (next, reward) = StreakRules.nextMilestone(Streak.current(this))
         tokensSubText.text = getString(R.string.wallet_sub, Emotions.DAILY_TOKENS, next, reward)
         refreshShop(s.tokens)
+        refreshTokenShelf()
 
         runCatching { GhostlyWidgetProvider.refreshAll(this) }
     }
