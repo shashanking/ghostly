@@ -88,7 +88,23 @@ short side. Raw 1080×2400 phone captures are 2.22:1 and get rejected — the on
 
 ## Release notes (What's new, max 500)
 
-### 1.3.0 (versionCode 6) — current
+### 1.4.0 (versionCode 7) — current
+
+```
+A daily streak: look after him once a day to keep it, with a weekly freeze for
+the day you forget. Tokens build up now instead of resetting, and milestones
+pay extra.
+
+A real Shop: treats that each do something different, hats, glasses and
+scarves drawn onto him wherever he floats, emojis over his head.
+
+He says when the streak is about to go, when he is hungry, and when he misses
+you — never at night, and every kind can be switched off.
+
+Hold him out there and his buttons come out around him.
+```
+
+### 1.3.0 (versionCode 6) — never published
 
 ```
 Hold him and his buttons come out. Feed him, play with him, pet him or put him
