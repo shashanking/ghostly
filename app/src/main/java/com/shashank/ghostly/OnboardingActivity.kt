@@ -73,7 +73,8 @@ class OnboardingActivity : Activity() {
         TutorialPage(
             IconGlyph.PLAY, "How to control him",
             "Tap him and he bolts. Hold still on him and he settles in for a pet. Feed, Play and " +
-                "Nap are always one tap away — Play and treats spend a small daily token allowance."
+                "Nap are always one tap away. Look after him every day to build a streak — tokens " +
+                "come daily and buy treats, clothes and emojis in the Shop."
         ),
         TutorialPage(
             IconGlyph.HAPPINESS, "Mood & behaviour",
@@ -654,7 +655,8 @@ class OnboardingActivity : Activity() {
         column.addView(
             permissionCard(
                 IconGlyph.SETTINGS, "Notifications",
-                "Android requires an ongoing notification while he's floating, with a Stop button.",
+                "So he can tell you when your streak is about to run out, or when he's hungry or " +
+                    "misses you — plus the one Android needs while he's floating.",
                 notifGranted
             ) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

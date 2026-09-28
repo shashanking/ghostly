@@ -108,7 +108,7 @@ class GhostOverlayService : Service() {
          * against the stored key itself — see the listener in [attachOverlay].
          */
         private val MOOD_KEYS = setOf("hunger", "energy", "happiness", "anger", "sleeping", "fed_at")
-        private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name")
+        private val LOOK_KEYS = setOf("species", "shade", "size_dp", "color_hue", "name", "owned_items") + Prefs.OUTFIT_KEYS
 
         /**
          * Whether he can be tapped outside the app. Unlike [MOOD_KEYS]/[LOOK_KEYS] this is not a
@@ -1160,6 +1160,12 @@ class GhostOverlayService : Service() {
 
             if (fresh.shade != pet.shade) view.setShade(fresh.shade)
 
+            val newOutfit = Outfit.load(ctx)
+            if (view.outfit != newOutfit) {
+                view.outfit = newOutfit
+                view.invalidate()
+            }
+
             // Renaming him changes nothing you can see out here — but the notification says his
             // name, and until this it went on saying the old one until he was next put to bed.
             val renamed = fresh.name != pet.name
@@ -1214,10 +1220,12 @@ class GhostOverlayService : Service() {
                 Emote.HAPPY -> {
                     view.showExpression(Expression.SMILE, 2.2f)
                     view.startWiggle()
+                    view.popEmoji()
                 }
                 Emote.AFFECTION -> {
                     view.showExpression(Expression.DELIGHTED, 2.4f)
                     view.spawnHeart()
+                    view.popEmoji()
                 }
                 Emote.SLEEPY -> view.showExpression(Expression.SLEEPY, 3.0f)
                 Emote.CURIOUS -> view.showExpression(Expression.CONFUSED, 2.2f)

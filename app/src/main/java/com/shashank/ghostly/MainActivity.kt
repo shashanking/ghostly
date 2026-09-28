@@ -77,7 +77,19 @@ class MainActivity : Activity() {
     // HUD
     private lateinit var nameLabel: TextView
     private lateinit var streakChipText: TextView
+    private lateinit var streakChipIcon: ImageView
     private lateinit var tokensChipText: TextView
+    private lateinit var tokensChipCaption: TextView
+    private var lastStreakChip: String? = null
+
+    /** A card that drops in under the HUD to celebrate a streak day or a purchase. */
+    private lateinit var banner: LinearLayout
+    private lateinit var bannerTitle: TextView
+    private lateinit var bannerText: TextView
+    private val hideBanner = Runnable {
+        banner.animate().alpha(0f).translationY(-dp(12).toFloat()).setDuration(220)
+            .withEndAction { banner.visibility = View.GONE }.start()
+    }
 
     // Home
     private lateinit var playground: GhostPlayground
@@ -112,10 +124,11 @@ class MainActivity : Activity() {
 
     // Shop
     private lateinit var tokensBigText: TextView
-    private lateinit var treatButton: Button
-    private lateinit var treatCard: View
-    private lateinit var giftButton: Button
-    private lateinit var giftCard: View
+    private lateinit var tokensSubText: TextView
+    private val shopCards = mutableListOf<ShopCard>()
+    private val shelfTabs = mutableListOf<Pair<ShopShelf, Button>>()
+    private val shelfPages = mutableMapOf<ShopShelf, View>()
+    private var shelfShown = ShopShelf.TREATS
 
     // Style
     private val speciesButtons = mutableListOf<Pair<Species, Button>>()
@@ -166,7 +179,6 @@ class MainActivity : Activity() {
         val previousOpen = Prefs.lastOpenedAt(this)
         val now = System.currentTimeMillis()
         Prefs.saveLastOpenedAt(this, now)
-        Streak.touch(this)
         if (previousOpen != 0L && now - previousOpen > WELCOME_BACK_GAP_MS) {
             Toast.makeText(this, "${petName()} missed you!", Toast.LENGTH_LONG).show()
         }
@@ -174,6 +186,17 @@ class MainActivity : Activity() {
         // Before anything is drawn: if he is meant to be out and is not, put him back out rather
         // than letting this screen decide he has come home.
         reviveIfHeShouldBeOut()
+        // You're looking at him, so nothing he has to say needs saying in the shade.
+        Nudges.appVisible = true
+        Nudges.clearMood(this)
+        Nudges.schedule(this)
+
+        // A notification can ask for a particular tab — a sulk is fixed in the Shop.
+        intent?.getStringExtra(EXTRA_TAB)?.let { tab ->
+            intent.removeExtra(EXTRA_TAB)
+            showTab(if (tab == "shop") AppTab.SHOP else AppTab.HOME)
+        }
+
         refreshState()
         // The overlay can come and go without this screen being told — stopped from its
         // notification, or restarted by the system — so keep the button honest while we're visible.
@@ -181,7 +204,13 @@ class MainActivity : Activity() {
         primaryButton.postDelayed(stateWatcher, WATCH_INTERVAL_MS)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onPause() {
+        Nudges.appVisible = false
         // Leaving the app is the other one — his stats have just been changed by hand.
         ContentSync.schedule(this)
         primaryButton.removeCallbacks(stateWatcher)
@@ -247,6 +276,8 @@ class MainActivity : Activity() {
         contentFrame.addView(shopPage)
         contentFrame.addView(stylePage)
         contentFrame.addView(settingsPage)
+        banner = buildBanner()
+        contentFrame.addView(banner)
         root.addView(contentFrame)
 
         tabBar = buildTabBar()
@@ -297,27 +328,38 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         })
 
-        val (streakChip, streakText) = hudChip(IconGlyph.ANGER, accent)
-        streakChipText = streakText
-        bar.addView(streakChip)
+        // Two chips, and each says what it counts — a bare flame and a bare dot read as two
+        // currencies. The streak is days in a row; tokens are the one thing you spend.
+        val streakChip = hudChip(IconGlyph.ANGER, STREAK_ORANGE, getString(R.string.hud_streak)) { showStreakInfo() }
+        streakChipText = streakChip.value
+        streakChipIcon = streakChip.icon
+        bar.addView(streakChip.root)
 
-        val (tokensChip, tokensText) = hudChip(IconGlyph.TOKEN, mint)
-        tokensChipText = tokensText
-        (tokensChip.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
-        bar.addView(tokensChip)
+        val tokensChip = hudChip(IconGlyph.TOKEN, mint, getString(R.string.hud_tokens)) { showTab(AppTab.SHOP) }
+        tokensChipText = tokensChip.value
+        tokensChipCaption = tokensChip.caption
+        (tokensChip.root.layoutParams as LinearLayout.LayoutParams).marginStart = dp(8)
+        bar.addView(tokensChip.root)
 
         return bar
     }
 
-    private fun hudChip(glyph: IconGlyph, tint: Int): Pair<LinearLayout, TextView> {
+    private class HudChip(val root: LinearLayout, val icon: ImageView, val value: TextView, val caption: TextView)
+
+    private fun hudChip(glyph: IconGlyph, tint: Int, caption: String, onClick: () -> Unit): HudChip {
         val chip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = rounded(card, dp(20).toFloat(), cardStroke)
             setPadding(dp(10), dp(6), dp(12), dp(6))
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
         }
-        chip.addView(iconView(glyph, tint, 15))
+        addPressBounce(chip)
+        val icon = iconView(glyph, tint, 15)
+        chip.addView(icon)
         val text = TextView(this).apply {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -325,7 +367,111 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginStart = dp(6) }
         }
         chip.addView(text)
-        return chip to text
+        val captionView = TextView(this).apply {
+            this.text = caption
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginStart = dp(4) }
+        }
+        chip.addView(captionView)
+        return HudChip(chip, icon, text, captionView)
+    }
+
+    /** The drop-in card that says a streak day counted, or that something new is his. */
+    private fun buildBanner(): LinearLayout {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Palette.glass, dp(18).toFloat(), Palette.glassStroke)
+            elevation = dp(8).toFloat()
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP).apply {
+                setMargins(dp(16), dp(8), dp(16), 0)
+            }
+            setOnClickListener { hideBanner.run() }
+        }
+        bannerTitle = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = uiMedium
+        }
+        bannerText = TextView(this).apply {
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(2) }
+        }
+        card.addView(bannerTitle)
+        card.addView(bannerText)
+        return card
+    }
+
+    private fun showBanner(title: String, text: String) {
+        banner.removeCallbacks(hideBanner)
+        banner.animate().cancel()
+        bannerTitle.text = title
+        bannerText.text = text
+        bannerText.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        banner.visibility = View.VISIBLE
+        banner.alpha = 0f
+        banner.translationY = -dp(12).toFloat()
+        banner.animate().alpha(1f).translationY(0f).setDuration(260).start()
+        banner.announceForAccessibility("$title. $text")
+        banner.postDelayed(hideBanner, BANNER_MS)
+    }
+
+    /**
+     * Something was done for him in the app — the only thing that keeps a streak going. Says so
+     * when it made a difference: the first day of a streak, another day on it, a freeze that
+     * saved it, a milestone.
+     */
+    private fun onCare() {
+        val result = Streak.recordCare(this)
+        val name = petName()
+        val n = result.state.current
+        val milestone = result.reward?.let { " +$it tokens for reaching $n days!" } ?: ""
+        when (result.event) {
+            StreakRules.Event.ALREADY_COUNTED -> return
+            StreakRules.Event.STARTED ->
+                showBanner("🔥 Streak started!", "Look after $name again tomorrow to make it 2 days.")
+            StreakRules.Event.EXTENDED ->
+                showBanner("🔥 $n-day streak!", "Keep it going tomorrow.$milestone")
+            StreakRules.Event.SAVED_BY_FREEZE ->
+                showBanner("🧊 Streak saved — $n days", "You missed a day, so this week's freeze covered it.$milestone")
+            StreakRules.Event.RESTARTED ->
+                showBanner("🔥 A fresh streak", "You're back! Your ${result.lost}-day streak ended — your best is ${result.state.longest}.")
+        }
+        if (result.milestone != null) playground.popEmoji("🔥")
+        refreshNeeds()
+    }
+
+    private fun showStreakInfo() {
+        val state = Streak.state(this)
+        val current = Streak.current(this)
+        val status = Streak.status(this)
+        val name = petName()
+        val (next, reward) = StreakRules.nextMilestone(current)
+        val freezes = StreakRules.refilled(state, Streak.today()).freezes
+        val headline = when (status) {
+            StreakRules.Status.DONE_TODAY -> "🔥 $current-day streak — today counts."
+            StreakRules.Status.AT_RISK -> "⌛ $current-day streak — look after $name today or it ends at midnight."
+            StreakRules.Status.FROZEN -> "🧊 $current-day streak — you missed yesterday. Visit today and the freeze saves it."
+            StreakRules.Status.NONE -> "No streak going yet."
+        }
+        val message = buildString {
+            append(headline)
+            append("\n\n")
+            append("Feed, play, pet or put $name down for a nap once a day to keep it going. ")
+            append("Opening the app on its own doesn't count.\n\n")
+            append("🧊 Streak freeze: ${if (freezes > 0) "1 ready" else "used"} this week — it covers one missed day.\n")
+            append("🏆 Longest: ${state.longest} days\n")
+            append("🎁 Day $next pays +$reward tokens")
+        }
+        AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
+            .setTitle(getString(R.string.streak_title))
+            .setMessage(message)
+            .setPositiveButton(getString(R.string.got_it), null)
+            .show()
     }
 
     private fun buildTabBar(): LinearLayout {
@@ -398,6 +544,8 @@ class MainActivity : Activity() {
         playground = GhostPlayground(this).apply {
             // Reaching into the empty box while he is out is a way of asking for him.
             onSummon = { visitBox() }
+            // Petting him in his box is looking after him, as much as feeding is.
+            onPetted = { onCare() }
             contentDescription = getString(R.string.a11y_box)
             background = rounded(card, dp(28).toFloat(), cardStroke)
             elevation = dp(3).toFloat()
@@ -458,6 +606,7 @@ class MainActivity : Activity() {
             PetStats.feed(this@MainActivity)
             Prefs.markFed(this@MainActivity)
             pulse(hungerBar)
+            onCare()
             refreshNeeds()
             // The treat drops once he is actually in the box — he may still be flying in.
             if (!reactOutThere("eat")) visitBox { playground.startFeeding() }
@@ -467,6 +616,7 @@ class MainActivity : Activity() {
         val play = quickActionButton("Play · ${Emotions.PLAY_COST}", IconGlyph.PLAY, leftMargin = true) {
             when (Emotions.playWithToken(this@MainActivity)) {
                 Emotions.PlayOutcome.SUCCESS -> {
+                    onCare()
                     refreshNeeds()
                     pulse(playground)
                     if (!reactOutThere("play")) visitBox { playground.startFetch() }
@@ -483,6 +633,7 @@ class MainActivity : Activity() {
         val rest = quickActionButton("Let him nap", IconGlyph.NAP, leftMargin = true) {
             val sleepingNow = PetStats.snapshot(this@MainActivity).sleeping
             PetStats.setSleeping(this@MainActivity, !sleepingNow)
+            onCare()
             refreshNeeds()
         }
         restLabel = rest.label
@@ -585,154 +736,346 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
         })
 
-        val tokensCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+        // The wallet: what you have, and where more comes from.
+        val wallet = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = gradientRounded(Palette.badge, Palette.card, dp(22).toFloat())
             elevation = dp(3).toFloat()
-            setPadding(dp(16), dp(20), dp(16), dp(20))
+            setPadding(dp(18), dp(16), dp(18), dp(16))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
         }
-        tokensCard.addView(iconView(IconGlyph.TOKEN, mint, 34))
+        wallet.addView(iconView(IconGlyph.TOKEN, mint, 34))
+        val walletText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = dp(14) }
+        }
         tokensBigText = TextView(this).apply {
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
             typeface = serifFace
-            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(8) }
         }
-        tokensCard.addView(tokensBigText)
-        tokensCard.addView(TextView(this).apply {
-            text = getString(R.string.tokens_left_today)
+        tokensSubText = TextView(this).apply {
             setTextColor(dim)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        })
-        column.addView(tokensCard)
-
-        column.addView(sectionLabel("Spend them"))
-
-        val (treatCardView, treatBtn) = shopItemCard(
-            IconGlyph.TREAT, "Treat", "A tastier pick-me-up than a free feed",
-            "Give · ${Emotions.TREAT_COST}"
-        ) {
-            if (Emotions.giveTreat(this@MainActivity)) {
-                pulse(treatCard)
-                Prefs.markFed(this@MainActivity)
-                refreshNeeds()
-                // Out floating, he eats it where he is and the Shop tab stays put — there is
-                // nothing on the Home tab to go and look at, because he is not in the box.
-                if (!reactOutThere("eat")) {
-                    // Home, so the treat falls in his box. Jump there or the animation plays
-                    // silently behind the Shop page.
-                    showTab(AppTab.HOME)
-                    // After the tab switch the box has only just been made visible: it has no
-                    // position on screen until it has been laid out. One frame is all it needs.
-                    playground.post { visitBox { playground.startFeeding() } }
-                }
-            } else {
-                toastNoTokens()
-            }
-        }
-        treatCard = treatCardView
-        treatButton = treatBtn
-        column.addView(treatCard)
-
-        val (giftCardView, giftBtn) = shopItemCard(
-            IconGlyph.GIFT, "Gift", "The real apology — wins him back when he's upset",
-            "Give · ${Emotions.GIFT_COST}"
-        ) {
-            if (Emotions.giveGift(this@MainActivity)) {
-                pulse(giftCard)
-                refreshNeeds()
-                if (!reactOutThere("gift")) {
-                    showTab(AppTab.HOME)
-                    playground.post { visitBox { playground.startGift() } }
-                }
-            } else {
-                toastNoTokens()
-            }
-        }
-        giftCard = giftCardView
-        giftButton = giftBtn
-        column.addView(giftCard)
-
-        column.addView(TextView(this).apply {
-            text = "Tokens reset to ${Emotions.DAILY_TOKENS} every day — they don't carry over, so " +
-                "there's no reason to hoard them."
-            setTextColor(Palette.textFaint)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setLineSpacing(dp(3).toFloat(), 1f)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(16) }
-        })
+            setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        walletText.addView(tokensBigText)
+        walletText.addView(tokensSubText)
+        wallet.addView(walletText)
+        column.addView(wallet)
 
+        // Three shelves, one showing at a time.
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(Palette.card, dp(16).toFloat(), Palette.cardStroke)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(18) }
+        }
+        ShopShelf.entries.forEachIndexed { i, shelf ->
+            val tab = pickerButton(shelf.label) { showShelf(shelf) }
+            tab.layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { if (i > 0) marginStart = dp(4) }
+            shelfTabs += shelf to tab
+            tabs.addView(tab)
+        }
+        column.addView(tabs)
+
+        val shelves = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
+        }
+        shelfPages[ShopShelf.TREATS] = buildShelf(null, ShopCatalog.TREATS, getString(R.string.shop_treats_note))
+        shelfPages[ShopShelf.WARDROBE] = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            listOf(OutfitSlot.HEAD, OutfitSlot.FACE, OutfitSlot.NECK).forEach { slot ->
+                addView(buildShelf(slot.label, ShopCatalog.WARDROBE.filter { it.slot == slot }, null))
+            }
+            addView(footnote(getString(R.string.shop_wardrobe_note)))
+        }
+        shelfPages[ShopShelf.EMOJIS] = buildShelf(null, ShopCatalog.EMOJIS, getString(R.string.shop_emojis_note))
+        shelfPages.values.forEach { shelves.addView(it) }
+        column.addView(shelves)
+
+        column.addView(footnote(getString(R.string.shop_footer, Emotions.DAILY_TOKENS)))
+
+        showShelf(ShopShelf.TREATS)
         scroll.addView(column)
         return scroll
     }
 
-    private fun shopItemCard(
-        glyph: IconGlyph,
-        title: String,
-        desc: String,
-        buttonLabel: String,
-        onClick: () -> Unit
-    ): Pair<View, Button> {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(card, dp(18).toFloat(), cardStroke)
-            elevation = dp(2).toFloat()
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) }
-        }
-
-        val badge = FrameLayout(this).apply {
-            background = rounded(Palette.badge, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
-        }
-        badge.addView(iconView(glyph, mint, 24).apply {
-            layoutParams = FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER }
-        })
-        row.addView(badge)
-
-        val textCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
-                marginStart = dp(14)
-                marginEnd = dp(10)
-            }
-        }
-        textCol.addView(TextView(this).apply {
-            text = title
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            typeface = uiMedium
-        })
-        textCol.addView(TextView(this).apply {
-            text = desc
-            setTextColor(dim)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setLineSpacing(dp(2).toFloat(), 1f)
-            layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { topMargin = dp(2) }
-        })
-        row.addView(textCol)
-
-        val button = Button(this).apply {
-            text = buttonLabel
-            isAllCaps = false
-            stateListAnimator = null
-            setTextColor(Palette.ink)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = rounded(mint, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(dp(94), dp(44))
-            setOnClickListener { onClick() }
-        }
-        addPressBounce(button)
-        row.addView(button)
-
-        return row to button
+    private fun footnote(text: String) = TextView(this).apply {
+        this.text = text
+        setTextColor(Palette.textFaint)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setLineSpacing(dp(3).toFloat(), 1f)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(16) }
     }
 
-    private fun toastNoTokens() =
-        Toast.makeText(this, getString(R.string.out_of_tokens_for_today_more_tomorrow), Toast.LENGTH_SHORT).show()
+    private fun showShelf(shelf: ShopShelf) {
+        shelfShown = shelf
+        shelfPages.forEach { (s, page) -> page.visibility = if (s == shelf) View.VISIBLE else View.GONE }
+        shelfTabs.forEach { (s, tab) -> stylePickerState(tab, s == shelf) }
+    }
+
+    /** A titled grid of item cards, two to a row. */
+    private fun buildShelf(title: String?, items: List<ShopItem>, note: String?): LinearLayout {
+        val shelf = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (title != null) shelf.addView(sectionLabel(title))
+        items.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) }
+            }
+            pair.forEachIndexed { i, item ->
+                val card = shopCard(item)
+                card.root.layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply {
+                    if (i > 0) marginStart = dp(12)
+                }
+                row.addView(card.root)
+            }
+            // An odd one out keeps its half-width rather than stretching across the row.
+            if (pair.size == 1) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f).apply { marginStart = dp(12) })
+            }
+            shelf.addView(row)
+        }
+        if (note != null) shelf.addView(footnote(note))
+        return shelf
+    }
+
+    private class ShopCard(
+        val item: ShopItem,
+        val root: LinearLayout,
+        val button: Button,
+        val preview: GhostView?,
+        var shown: String? = null,
+    )
+
+    /**
+     * One thing for sale. Treats and emojis show as themselves; clothes show on him — his own
+     * kind and shade, wearing whatever else he has on plus this.
+     */
+    private fun shopCard(item: ShopItem): ShopCard {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = rounded(card, dp(20).toFloat(), cardStroke)
+            elevation = dp(2).toFloat()
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        val well = FrameLayout(this).apply {
+            background = rounded(Palette.badge, dp(16).toFloat())
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(116))
+        }
+        var preview: GhostView? = null
+        if (item.shelf == ShopShelf.WARDROBE) {
+            val size = dp(70)
+            preview = GhostView(this).apply {
+                species = Prefs.species(this@MainActivity)
+                setShade(Prefs.shade(this@MainActivity))
+                outfit = Outfit.load(this@MainActivity).with(item)
+                isClickable = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                layoutParams = FrameLayout.LayoutParams(
+                    size + GhostView.bubbleSidePx(resources.displayMetrics.density, size) * 2,
+                    size + GhostView.headroomPx(resources.displayMetrics.density, size) + GhostView.haloPadPx(size),
+                    Gravity.CENTER,
+                )
+                setBodySize(size)
+            }
+            well.addView(preview)
+        } else {
+            well.addView(TextView(this).apply {
+                text = item.emoji
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f)
+                gravity = Gravity.CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            })
+        }
+        root.addView(well)
+        root.addView(TextView(this).apply {
+            text = item.name
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = uiMedium
+            gravity = Gravity.CENTER
+            maxLines = 1
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
+        })
+        root.addView(TextView(this).apply {
+            text = item.blurb
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            gravity = Gravity.CENTER
+            maxLines = 2
+            minLines = 2
+            setLineSpacing(dp(1).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(2) }
+        })
+        val button = Button(this).apply {
+            isAllCaps = false
+            stateListAnimator = null
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = uiMedium
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(40)).apply { topMargin = dp(10) }
+            setOnClickListener { onShopItem(item) }
+        }
+        addPressBounce(button)
+        root.addView(button)
+        val bound = ShopCard(item, root, button, preview)
+        shopCards += bound
+        return bound
+    }
+
+    private fun onShopItem(item: ShopItem) {
+        when {
+            !item.keeps -> giveShopTreat(item)
+            ShopCatalog.isWorn(this, item) -> {
+                ShopCatalog.takeOff(this, item)
+                refreshLookEverywhere()
+            }
+            ShopCatalog.owns(this, item) -> {
+                ShopCatalog.wear(this, item)
+                refreshLookEverywhere()
+                if (item.slot == OutfitSlot.EMOJI) playground.popEmoji(item.emoji, force = true)
+            }
+            else -> confirmPurchase(item)
+        }
+    }
+
+    private fun giveShopTreat(item: ShopItem) {
+        if (!Emotions.giveTreat(this, item)) {
+            toastNeedMore(item.price)
+            return
+        }
+        if (!item.unwraps) Prefs.markFed(this)
+        onCare()
+        // The animation plays in his box on the Home tab — jump there so it is actually seen rather
+        // than happening silently behind the Shop page, and call him in for it if he is out
+        // floating, or the treat drops into an empty box.
+        showTab(AppTab.HOME)
+        refreshNeeds()
+        // After the tab switch the box has only just been made visible: it has no position on
+        // screen until it has been laid out, and calling him to a box at 0,0 sends him to the
+        // wrong place. One frame is all it needs.
+        playground.post {
+            visitBox { if (item.unwraps) playground.startGift() else playground.startFeeding(item.emoji) }
+        }
+    }
+
+    private fun confirmPurchase(item: ShopItem) {
+        val have = Emotions.tokens(this)
+        if (have < item.price) {
+            toastNeedMore(item.price)
+            return
+        }
+        val name = petName()
+        val what = if (item.slot == OutfitSlot.EMOJI) {
+            "${item.emoji}  It floats up over $name's head whenever he's happy — petted, fed or playing."
+        } else {
+            "${item.blurb}. $name puts it on straight away, and it's his to keep."
+        }
+        AlertDialog.Builder(this, R.style.Theme_Ghostly_Dialog)
+            .setTitle(getString(R.string.shop_buy_title, item.name))
+            .setMessage("$what\n\n${item.price} tokens · you have $have")
+            .setPositiveButton(getString(R.string.shop_buy_confirm, item.price)) { _, _ ->
+                when (ShopCatalog.buy(this, item)) {
+                    ShopCatalog.BuyResult.BOUGHT -> {
+                        refreshLookEverywhere()
+                        showBanner(
+                            if (item.slot == OutfitSlot.EMOJI) "${item.emoji} ${item.name} is his now" else "✨ ${item.name} is his now",
+                            if (item.slot == OutfitSlot.EMOJI) "Watch for it when he's happy." else "He's wearing it. Tap Wearing to take it off any time.",
+                        )
+                        if (item.slot == OutfitSlot.EMOJI) playground.popEmoji(item.emoji, force = true)
+                    }
+                    ShopCatalog.BuyResult.CANT_AFFORD -> toastNeedMore(item.price)
+                    ShopCatalog.BuyResult.ALREADY_OWNED -> refreshLookEverywhere()
+                }
+            }
+            .setNegativeButton(getString(R.string.cancel), null)
+            .show()
+    }
+
+    private fun toastNeedMore(price: Int) {
+        val short = price - Emotions.tokens(this)
+        Toast.makeText(this, getString(R.string.shop_need_more, short.coerceAtLeast(1), Emotions.DAILY_TOKENS), Toast.LENGTH_LONG).show()
+    }
+
+    /** A change of clothes, shown everywhere he is drawn: the box, the pickers, the Shop. The
+     *  overlay notices the Prefs change by itself. */
+    private fun refreshLookEverywhere() {
+        playground.applyLook()
+        refreshState()
+        runCatching { GhostlyWidgetProvider.refreshAll(this) }
+    }
+
+    /** Each card's button and preview, brought in line with the wallet and what he owns. Runs on
+     *  every refresh, so it only touches what has actually changed. */
+    private fun refreshShop(tokens: Int) {
+        val owned = Prefs.ownedItems(this)
+        val outfit = Outfit.load(this)
+        val species = Prefs.species(this)
+        val shade = Prefs.shade(this)
+        shopCards.forEach { card ->
+            val item = card.item
+            val worn = item.slot != null && when (item.slot) {
+                OutfitSlot.HEAD -> outfit.head == item.id
+                OutfitSlot.FACE -> outfit.face == item.id
+                OutfitSlot.NECK -> outfit.neck == item.id
+                OutfitSlot.EMOJI -> outfit.emoji == item.id
+            }
+            val has = item.id in owned
+            val affordable = tokens >= item.price
+            val state = when {
+                !item.keeps -> "give:$affordable"
+                worn -> "worn"
+                has -> "owned"
+                else -> "buy:$affordable"
+            }
+            card.preview?.let { preview ->
+                val wanted = outfit.with(item)
+                if (preview.outfit != wanted) preview.outfit = wanted
+                if (preview.species != species) {
+                    preview.species = species
+                    preview.invalidate()
+                }
+                preview.setShade(shade)
+            }
+            if (card.shown == state) return@forEach
+            card.shown = state
+            val b = card.button
+            when {
+                !item.keeps -> {
+                    b.text = getString(R.string.shop_give, item.price)
+                    b.background = rounded(mint, dp(14).toFloat())
+                    b.setTextColor(Palette.ink)
+                    b.alpha = if (affordable) 1f else 0.45f
+                }
+                worn -> {
+                    b.text = getString(R.string.shop_wearing)
+                    b.background = rounded(Palette.bone, dp(14).toFloat())
+                    b.setTextColor(Palette.ink)
+                    b.alpha = 1f
+                }
+                has -> {
+                    b.text = getString(if (item.slot == OutfitSlot.EMOJI) R.string.shop_use else R.string.shop_wear)
+                    b.background = rounded(Palette.glass, dp(14).toFloat(), Palette.glassStroke)
+                    b.setTextColor(Palette.bone)
+                    b.alpha = 1f
+                }
+                else -> {
+                    b.text = getString(R.string.shop_buy, item.price)
+                    b.background = rounded(Palette.glass, dp(14).toFloat(), Palette.glassStroke)
+                    b.setTextColor(Palette.bone)
+                    b.alpha = if (affordable) 1f else 0.45f
+                }
+            }
+            card.root.background = rounded(this.card, dp(20).toFloat(), if (worn) Palette.bone else cardStroke)
+            b.contentDescription = "${item.name}, ${b.text}"
+        }
+    }
+
+    private fun toastNoTokens() = toastNeedMore(Emotions.PLAY_COST)
 
     // endregion
 
@@ -870,6 +1213,9 @@ class MainActivity : Activity() {
             tile.preview.species = speciesNow
             tile.preview.invalidate()
         }
+        // Dressed as he is, so the pickers show him and not a stranger.
+        val outfitNow = Outfit.load(this)
+        if (tile.preview.outfit != outfitNow) tile.preview.outfit = outfitNow
         tile.root.background = if (selected) {
             rounded(Palette.glass, dp(18).toFloat(), Palette.bone)
         } else {
@@ -965,6 +1311,31 @@ class MainActivity : Activity() {
             setLineSpacing(dp(3).toFloat(), 1f)
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(6) }
         })
+        column.addView(sectionLabel(getString(R.string.settings_notifications)).apply {
+            // Debug builds only: hold the heading to see every notification he can send, at once.
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                setOnLongClickListener {
+                    Nudges.previewAll(this@MainActivity)
+                    true
+                }
+            }
+        })
+        column.addView(TextView(this).apply {
+            text = getString(R.string.settings_notifications_body)
+            setTextColor(dim)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(10) }
+        })
+        column.addView(settingsSwitch(R.string.notify_streak, Prefs.notifyStreak(this), topMargin = 18) {
+            Prefs.setNotifyStreak(this, it)
+        })
+        column.addView(settingsSwitch(R.string.notify_mood, Prefs.notifyMood(this)) { Prefs.setNotifyMood(this, it) })
+        column.addView(settingsSwitch(R.string.notify_missing, Prefs.notifyMissing(this)) { Prefs.setNotifyMissing(this, it) })
+        notificationsOffRow = settingsRowButton(getString(R.string.notifications_off_open_settings), null) {
+            openNotificationSettings()
+        }
+        column.addView(notificationsOffRow)
 
         column.addView(sectionLabel("If he vanishes"))
         column.addView(TextView(this).apply {
@@ -1011,6 +1382,31 @@ class MainActivity : Activity() {
 
         scroll.addView(column)
         return scroll
+    }
+
+    /** Only shown while the system has this app's notifications switched off entirely. */
+    private var notificationsOffRow: View? = null
+
+    private fun settingsSwitch(label: Int, checked: Boolean, topMargin: Int = 14, onChange: (Boolean) -> Unit) =
+        Switch(this).apply {
+            text = getString(label)
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Type.sans(this@MainActivity)
+            thumbTintList = ColorStateList.valueOf(Palette.bone)
+            trackTintList = ColorStateList.valueOf(Palette.cardStroke)
+            isChecked = checked
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { this.topMargin = dp(topMargin) }
+            setOnCheckedChangeListener { _, value -> onChange(value) }
+        }
+
+    private fun openNotificationSettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
+            )
+        }.onFailure { openAppInfo() }
     }
 
     private var accountStatus: TextView? = null
@@ -1488,6 +1884,13 @@ class MainActivity : Activity() {
 
     private fun refreshState() {
         refreshAccountSection()
+        notificationsOffRow?.visibility = if (
+            getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() == false
+        ) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
         val canOverlay = Settings.canDrawOverlays(this)
         val floating = GhostOverlayService.isRunning
         lastKnownRunning = floating
@@ -1591,21 +1994,43 @@ class MainActivity : Activity() {
         nameLabel.text = if (Prefs.name(this) == null) "Tap to name him" else name
         nameLabel.setTextColor(if (Prefs.name(this) == null) dim else Color.WHITE)
 
-        val streak = Prefs.streak(this)
-        streakChipText.text = streak.toString()
+        refreshStreakChip()
 
-        playRoot.isEnabled = s.tokens >= Emotions.PLAY_COST
-        playRoot.alpha = if (playRoot.isEnabled) 1f else 0.5f
+        // Still tappable when there's nothing to spend, so the tap can say where tokens come from.
+        playRoot.alpha = if (s.tokens >= Emotions.PLAY_COST) 1f else 0.5f
 
         tokensChipText.text = s.tokens.toString()
-        tokensBigText.text = "${s.tokens}/${Emotions.DAILY_TOKENS}"
-
-        treatButton.isEnabled = s.tokens >= Emotions.TREAT_COST
-        treatButton.alpha = if (treatButton.isEnabled) 1f else 0.5f
-        giftButton.isEnabled = s.tokens >= Emotions.GIFT_COST
-        giftButton.alpha = if (giftButton.isEnabled) 1f else 0.5f
+        tokensChipCaption.text = resources.getQuantityString(R.plurals.hud_tokens, s.tokens)
+        tokensBigText.text = resources.getQuantityString(R.plurals.tokens_count, s.tokens, s.tokens)
+        val (next, reward) = StreakRules.nextMilestone(Streak.current(this))
+        tokensSubText.text = getString(R.string.wallet_sub, Emotions.DAILY_TOKENS, next, reward)
+        refreshShop(s.tokens)
 
         runCatching { GhostlyWidgetProvider.refreshAll(this) }
+    }
+
+    /**
+     * The flame is lit once today counts, and waiting — with an hourglass, as Snapchat has it —
+     * while the streak still needs looking after before midnight.
+     */
+    private fun refreshStreakChip() {
+        val current = Streak.current(this)
+        val status = Streak.status(this)
+        val key = "$current:$status"
+        if (key == lastStreakChip) return
+        lastStreakChip = key
+        streakChipText.text = when (status) {
+            StreakRules.Status.AT_RISK -> "$current ⌛"
+            StreakRules.Status.FROZEN -> "$current 🧊"
+            else -> current.toString()
+        }
+        val lit = status == StreakRules.Status.DONE_TODAY
+        streakChipIcon.setImageDrawable(IconDrawable(IconGlyph.ANGER, if (lit) STREAK_ORANGE else dim))
+        (streakChipText.parent as? View)?.contentDescription = when (status) {
+            StreakRules.Status.DONE_TODAY -> getString(R.string.a11y_streak_done, current)
+            StreakRules.Status.AT_RISK, StreakRules.Status.FROZEN -> getString(R.string.a11y_streak_at_risk, current)
+            StreakRules.Status.NONE -> getString(R.string.a11y_streak_none)
+        }
     }
 
     /**
@@ -1833,6 +2258,14 @@ class MainActivity : Activity() {
     companion object {
         /** The update notification opens straight into finishing the install. */
         const val ACTION_FINISH_UPDATE = "com.shashank.ghostly.FINISH_UPDATE"
+
+        /** Which tab a notification wants open: "home" or "shop". */
+        const val EXTRA_TAB = "com.shashank.ghostly.TAB"
+
+        /** A lit streak flame. The one warm colour outside his clothes — it only means "today counts". */
+        private val STREAK_ORANGE = Color.parseColor("#FF9A3D")
+
+        private const val BANNER_MS = 3_600L
 
         private const val WATCH_INTERVAL_MS = 1_000L
         private const val WELCOME_BACK_GAP_MS = 12 * 60 * 60 * 1_000L

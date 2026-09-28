@@ -163,6 +163,8 @@ class GhostPlayground @JvmOverloads constructor(
      */
     var onSummonPet: ((Int) -> Unit)? = null
 
+    /** He was petted — told to the screen so it can count towards the day's streak. */
+    var onPetted: (() -> Unit)? = null
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.parseColor("#3A3A46")
@@ -232,6 +234,10 @@ class GhostPlayground @JvmOverloads constructor(
     private var reactionEndsAt = 0f
     private val treatDrawable = IconDrawable(IconGlyph.TREAT, Color.parseColor("#E8B84F"))
     private val giftDrawable = IconDrawable(IconGlyph.GIFT, Color.parseColor("#E86BA8"))
+
+    /** A Shop treat falls in as itself — a cookie, a donut — rather than as the plain treat icon. */
+    private var deliveryEmoji: String? = null
+    private val emojiItemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
 
     private enum class DeliveryState { NONE, FALLING, CHASING, REACTING }
     private enum class DeliveryKind { TREAT, GIFT }
@@ -440,7 +446,10 @@ class GhostPlayground @JvmOverloads constructor(
     }
 
     fun applyLook(slot: Int) {
-        if (resident(slot) == null) return
+        val r = resident(slot) ?: return
+        // One wardrobe for the account, worn by whoever is in the box.
+        val outfit = Outfit.load(context)
+        if (r.view.outfit != outfit) r.view.outfit = outfit
         setSpecies(Prefs.species(context, slot), slot)
         setShade(Prefs.shade(context, slot), slot)
         setGhostSize((Prefs.sizeDp(context, slot) * density).toInt(), slot)
@@ -504,11 +513,23 @@ class GhostPlayground @JvmOverloads constructor(
 
     /** Drops a treat from a corner for him to sprint after and eat — called on Feed/Treat. Purely
      *  a visual flourish; the actual stat effects are already applied by the time this runs. */
-    fun startFeeding(slot: Int = PetStore.PRIMARY_SLOT) = startDelivery(DeliveryKind.TREAT, slot)
+    fun startFeeding(emoji: String? = null, slot: Int = PetStore.PRIMARY_SLOT) {
+        deliveryEmoji = emoji
+        startDelivery(DeliveryKind.TREAT, slot)
+    }
+
+    /** Floats an emoji up off his head — the one he wears, unless told otherwise. */
+    fun popEmoji(emoji: String? = null, force: Boolean = false, slot: Int = PetStore.PRIMARY_SLOT) {
+        val view = (resident(slot) ?: primary).view
+        if (emoji != null) view.popEmoji(emoji, force) else view.popEmoji(force = force)
+    }
 
     /** Drops a gift from a corner for him to sprint after and unwrap — called on Gift. Purely a
      *  visual flourish; the actual stat effects are already applied by the time this runs. */
-    fun startGift(slot: Int = PetStore.PRIMARY_SLOT) = startDelivery(DeliveryKind.GIFT, slot)
+    fun startGift(slot: Int = PetStore.PRIMARY_SLOT) {
+        deliveryEmoji = null
+        startDelivery(DeliveryKind.GIFT, slot)
+    }
 
     /** The same onlooker seam as [startFetch]: the item is aimed at one pet, and what the rest of
      *  the box does while food falls into it is Phase 2's to decide. */
@@ -686,6 +707,7 @@ class GhostPlayground @JvmOverloads constructor(
         r.view.startPetting()
         r.view.showExpression(Expression.DELIGHTED, 2.4f)
         vocalise(r, "happy")
+        onPetted?.invoke()
         // Still held: keep ticking affection for as long as the finger stays put.
         petHandler.postDelayed(petRunnable, PET_ANIMATION_MS)
     }
@@ -716,9 +738,15 @@ class GhostPlayground @JvmOverloads constructor(
         }
         if (deliveryState == DeliveryState.FALLING || deliveryState == DeliveryState.CHASING) {
             val r = ((resident(deliverySlot) ?: primary).size * 0.18f).toInt()
-            val drawable = if (deliveryKind == DeliveryKind.TREAT) treatDrawable else giftDrawable
-            drawable.setBounds((itemX - r).toInt(), (itemY - r).toInt(), (itemX + r).toInt(), (itemY + r).toInt())
-            drawable.draw(canvas)
+            val emoji = deliveryEmoji
+            if (emoji != null) {
+                emojiItemPaint.textSize = r * 2.2f
+                canvas.drawText(emoji, itemX, itemY + r * 0.75f, emojiItemPaint)
+            } else {
+                val drawable = if (deliveryKind == DeliveryKind.TREAT) treatDrawable else giftDrawable
+                drawable.setBounds((itemX - r).toInt(), (itemY - r).toInt(), (itemX + r).toInt(), (itemY + r).toInt())
+                drawable.draw(canvas)
+            }
         }
         residents.forEach { if (it.away) drawEmpty(canvas, it) }
         // The line along the bottom is the box's, not anyone's: it says what the box is for. It
