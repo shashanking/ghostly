@@ -131,6 +131,14 @@ Play takes 15% of the first $1M of yearly revenue, 30% above that.
 
 ## 6. Release worldwide
 
+> **If this is a personal (individual) developer account created after 13 Nov 2023, Production is
+> locked.** Google requires a closed test with **at least 12 testers, opted in continuously for 14
+> days**, before production access can even be applied for. Testers who opt out and back in restart
+> their 14 days. This is not a review delay you can wait out — the Production section stays disabled
+> until it is done, so start the closed test first and treat the 14 days as the real lead time.
+> Organisation accounts are exempt.
+> <https://support.google.com/googleplay/android-developer/answer/14151465>
+
 **Production → Create new release**
 
 - Upload `app/build/outputs/bundle/release/app-release.aab`
